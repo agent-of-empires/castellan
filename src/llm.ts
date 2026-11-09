@@ -202,15 +202,17 @@ function balancedEnd(text: string, start: number): number {
 
 /** The first balanced object that parses, preferring a fenced block; else the first-to-last brace slice. */
 function extractJson(text: string): string {
-	const body = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1] ?? text;
-	for (let i = body.indexOf("{"); i >= 0; i = body.indexOf("{", i + 1)) {
-		const end = balancedEnd(body, i);
-		if (end < 0) continue;
-		const slice = body.slice(i, end);
-		try {
-			JSON.parse(slice);
-			return slice;
-		} catch {}
+	const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1];
+	for (const body of fenced !== undefined ? [fenced, text] : [text]) {
+		for (let i = body.indexOf("{"); i >= 0; i = body.indexOf("{", i + 1)) {
+			const end = balancedEnd(body, i);
+			if (end < 0) continue;
+			const slice = body.slice(i, end);
+			try {
+				JSON.parse(slice);
+				return slice;
+			} catch {}
+		}
 	}
 	return text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
 }

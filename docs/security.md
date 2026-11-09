@@ -75,7 +75,7 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 
 ## What the budget cap does
 
-- `maxCostUsd` (`LlmDeps` in `src/llm.ts`) is a per call guard: before sending, castellan estimates the input cost as `(system + user characters) / 4` tokens at the model's input price, and a call above the cap fails with `budget`, which escalates. Output tokens are not estimated; `max_tokens` bounds them at 2,048.
+- `maxCostUsd` (`LlmDeps` in `src/llm.ts`) is a per call guard: before sending, castellan estimates the input cost as `(system + user characters) / 4` tokens at the model's input price, and a call above the cap fails with `budget`, which escalates. Output tokens are not estimated; `max_tokens` bounds them at 4,096.
 - No shipped entrypoint (Lambda, Action, CLI) sets `maxCostUsd`, so this cap is not active today.
 - The `budget` failure is also what an unpriced model id produces. That check is always active: only the four default model ids have a price, so any other `models.*` value fails closed.
 - Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs in `enforce` (`shadow` makes one cached call per head for them too), no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda. A failed model call is never cached, so later `check_suite` events retry it until one succeeds.

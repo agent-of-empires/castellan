@@ -129,6 +129,30 @@ describe("review", () => {
 		});
 	});
 
+	it("falls back to the whole text when a backtick quote ends the fence early", async () => {
+		const v = {
+			...good,
+			reasons: [{ severity: "nit", text: "use ```x``` here" }],
+		};
+		const { client } = fake(
+			`\`\`\`json\n${JSON.stringify(v)}\n\`\`\`\nNote {x}`,
+		);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: v,
+		});
+	});
+
+	it("parses a fenced reply followed by prose with braces", async () => {
+		const { client } = fake(
+			`\`\`\`json\n${JSON.stringify(good)}\n\`\`\`\nSee {x} and {y}.`,
+		);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: good,
+		});
+	});
+
 	it("respects braces and escapes inside strings", async () => {
 		const v = { ...good, reasons: [{ severity: "nit", text: 'a } "{" \\' }] };
 		const { client } = fake(`ok ${JSON.stringify(v)} {x}`);
