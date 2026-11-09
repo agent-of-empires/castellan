@@ -212,22 +212,24 @@ These are fixed in code. Changing one is a code change and a release.
 
 ### Evaluation order
 
-First rule with a hit decides; all hits of that one rule are listed, and the comment shows at most 3 reasons (`(+N more)` after). Skip rules run first, then escalate rules, then the model.
+First rule with a hit decides; all hits of that one rule are listed, and the comment shows at most 3 reasons (`(+N more)` after). Skip rules run first, then `merge_conflict`, then the wait rule, then the other escalate rules, then the model.
 
 **Skip (nothing is posted):** `draft`, `skipped_author` (only `dependabot[bot]`), `non_default_base`, `skip_branch`, `mode_off`.
+
+**Wait (`ci_unsettled`):** CI has not settled when a required check has no run on the head SHA, or any check run is pending, queued or in progress. Nothing is posted and the model is not called; the `castellan` status is `pending` with "castellan: waiting for CI" ("shadow: waiting for CI" in `shadow`). The PR is evaluated again on `check_suite` completed, on `status` events and by the sweep, with no wait ceiling.
 
 **Escalate, in order:**
 
 | Rule id                              | Escalates when                                                                                                                                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                       |
 | `castellan_config`                   | a changed path is `.castellan.yml` (at any depth)                                                                                                            |
 | `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                    |
 | `github_dir`                         | a changed path is under a `.github/` directory                                                                                                               |
 | `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                          |
 | `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                         |
-| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral, skipped or still running                                                         |
-| `check_pending`                      | a check run is pending, queued or in progress                                                                                                                |
-| `required_check`                     | a check required by the active rulesets for the base branch is missing, or did not end in success, neutral or skipped (as on GitHub)                         |
+| `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                        |
+| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                        |
 | `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                        |
 | `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                              |
 | `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                           |
