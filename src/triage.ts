@@ -177,7 +177,8 @@ export function escapeText(text: string): string {
  * Classifies an issue and, by mode, comments the proposal (shadow) or applies it
  * and comments the reasons (enforce). Fills missing fields only, and only while
  * the needs-triage label is present. Every name is resolved before any write.
- * Never throws on model failure; GitHub errors propagate.
+ * Never throws on model failure; GitHub errors propagate. With `dryRun` nothing
+ * is written (no labels, fields, comment or label removal); the proposal is returned.
  */
 export async function triage(
 	issue: TriageIssue,
@@ -185,6 +186,7 @@ export async function triage(
 	transport: GithubTransport,
 	repoRef: Repo,
 	deps: LlmDeps = {},
+	opts: { dryRun?: boolean } = {},
 ): Promise<TriageResult> {
 	const { owner, repo } = repoRef;
 	if (config.mode === "off") return { ok: true, skipped: "off" };
@@ -245,7 +247,7 @@ export async function triage(
 		[priorityField, sizeField, statusField].every((f) => values.has(f)) &&
 		(haveType !== feature || values.has(roadmapField));
 	if (nothingMissing) {
-		if (config.mode === "enforce") await removeNeedsTriage();
+		if (config.mode === "enforce" && !opts.dryRun) await removeNeedsTriage();
 		return { ok: true, skipped: "nothing missing" };
 	}
 	if (!project) {
@@ -347,6 +349,8 @@ export async function triage(
 		readyForAgent: c.readyForAgent,
 		reasons: c.reasons,
 	};
+
+	if (opts.dryRun) return { ok: true, mode: config.mode, proposal };
 
 	if (config.mode === "enforce") {
 		if (labels.length) {

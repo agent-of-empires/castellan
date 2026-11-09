@@ -11,6 +11,7 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"eval": "node dist/eval.mjs",
+		"test:bundle": "node --input-type=module -e \"const m = await import('./dist/lambda/index.mjs'); if (typeof m.handler !== 'function') throw new Error('no handler export')\"",
 		"lint": "biome check .",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
@@ -25,6 +26,7 @@
 	"dependencies": {
 		"@anthropic-ai/bedrock-sdk": "^1.1.1",
 		"@anthropic-ai/sdk": "^1.6.0",
+		"@aws-sdk/client-secrets-manager": "^3.1164.0",
 		"octokit": "^5.0.5",
 		"yaml": "^2.9.1",
 		"zod": "^4.6.7"
