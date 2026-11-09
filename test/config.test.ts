@@ -16,6 +16,7 @@ teams: { maintainers: org/maint, protected: org/sec }
 trustedAuthors: [klubrake]
 labels: { needsTriage: triage, bug: defect }
 project: { statusField: S, priorityField: P, sizeField: Z, roadmapField: R }
+llm: { provider: anthropic }
 models: { review: m1, triage: m2 }
 prompt: { base: be strict, guidance: ["no em dashes"] }
 `),
@@ -119,5 +120,55 @@ describe("githubReader", () => {
 			status: 500,
 		});
 		expect(await loadConfig("abc123", read)).toMatchObject({ ok: false });
+	});
+});
+
+describe("llm and models", () => {
+	const load = (yaml: string) => loadConfig("main", reader(yaml));
+
+	it("defaults to bedrock with bedrock model ids", async () => {
+		expect(await load("")).toMatchObject({
+			ok: true,
+			config: {
+				llm: { provider: "bedrock" },
+				models: {
+					review: "us.anthropic.claude-sonnet-5-5",
+					triage: "us.anthropic.claude-haiku-5-5",
+				},
+			},
+		});
+	});
+
+	it("defaults to plain ids for the anthropic provider", async () => {
+		expect(await load("llm: { provider: anthropic }")).toMatchObject({
+			ok: true,
+			config: {
+				models: { review: "claude-sonnet-5-5", triage: "claude-haiku-5-5" },
+			},
+		});
+	});
+
+	it("keeps an explicit model and defaults the other", async () => {
+		expect(await load("models: { review: global.anthropic.x }")).toMatchObject({
+			ok: true,
+			config: {
+				models: {
+					review: "global.anthropic.x",
+					triage: "us.anthropic.claude-haiku-5-5",
+				},
+			},
+		});
+	});
+
+	it("rejects a non-bedrock id for the bedrock provider", async () => {
+		const r = await load("models: { review: claude-sonnet-5-5 }");
+		expect(r).toMatchObject({ ok: false });
+		expect(r.ok === false && r.error).toContain("models.review");
+	});
+
+	it("rejects an unknown provider", async () => {
+		expect(await load("llm: { provider: openai }")).toMatchObject({
+			ok: false,
+		});
 	});
 });
