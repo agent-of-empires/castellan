@@ -337,7 +337,83 @@ describe("routing", () => {
 	});
 });
 
+describe("owner/* entries", () => {
+	const pr = (full_name: string) => {
+		const [owner = "", name = ""] = full_name.split("/");
+		return hook("pull_request", {
+			action: "opened",
+			repository: { id: 1, full_name, owner: { login: owner }, name },
+			pull_request: { number: 1 },
+		});
+	};
+
+	it("accepts any repo of the owner, case-insensitively, and ignores others", async () => {
+		const { handler } = setup(["Agent-Of-Empires/*", "x/exact"]);
+		await handler(pr("agent-of-empires/anything"));
+		await handler(pr("x/exact"));
+		expect(evaluatePull).toHaveBeenCalledTimes(2);
+		const res = await handler(pr("other-org/x"));
+		expect(res.body).toMatch(/not allowed/);
+		expect((await handler(pr("x/other"))).body).toMatch(/not allowed/);
+		expect(evaluatePull).toHaveBeenCalledTimes(2);
+	});
+
+	it("sweeps installation repos of the owner, skipping archived and other owners, deduping exact entries", async () => {
+		const { handler, transport } = setup(["o/*", "o/a"]);
+		const repo = (full_name: string, archived = false) => ({
+			full_name,
+			archived,
+			owner: { login: full_name.split("/")[0] },
+		});
+		transport.paginate.mockResolvedValue([
+			repo("o/a"),
+			repo("o/b"),
+			repo("o/old", true),
+			repo("p/c"),
+		]);
+		await handler({ source: "sweep" });
+		expect(transport.paginate).toHaveBeenCalledWith(
+			"GET /installation/repositories",
+			{ per_page: 100 },
+		);
+		expect(vi.mocked(listWork).mock.calls.map((c) => c[1])).toEqual([
+			{ owner: "o", repo: "a" },
+			{ owner: "o", repo: "b" },
+		]);
+	});
+});
+
+describe("non-wildcard patterns", () => {
+	it.each(["*", "*/*", "o/pre*"])("%s is not a wildcard", async (entry) => {
+		const { handler } = setup([entry]);
+		const res = await handler(
+			hook("pull_request", {
+				action: "opened",
+				repository: { ...repository, full_name: "o/prefix", name: "prefix" },
+				pull_request: { number: 1 },
+			}),
+		);
+		expect(res.body).toMatch(/not allowed/);
+		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+});
+
 describe("sweep", () => {
+	it("still sweeps exact entries when the installation listing fails, and replies 500", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler, transport } = setup(["o/*", "x/y"]);
+		transport.paginate.mockRejectedValue(new Error("rate limited"));
+		const res = await handler({ source: "sweep" });
+		expect(res.statusCode).toBe(500);
+		expect(console.error).toHaveBeenCalledWith(
+			"sweep: listing installation repos failed",
+			expect.any(Error),
+		);
+		expect(vi.mocked(listWork).mock.calls.map((c) => c[1])).toEqual([
+			{ owner: "x", repo: "y" },
+		]);
+	});
+
 	it("runs the pipeline for every open PR and needs-triage issue", async () => {
 		const { handler } = setup();
 		const res = await handler({ source: "sweep" });
