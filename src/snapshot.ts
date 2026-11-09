@@ -15,6 +15,8 @@ export interface Snapshot {
 	author: string;
 	authorClass: AuthorClass;
 	draft: boolean;
+	/** From the pull payload; null while GitHub is still computing it. */
+	mergeable: boolean | null;
 	baseRef: string;
 	baseSha: string;
 	headRef: string;
@@ -112,6 +114,7 @@ export async function buildSnapshot(
 		author: pr.user.login,
 		authorClass,
 		draft: pr.draft ?? false,
+		mergeable: pr.mergeable,
 		baseRef: pr.base.ref,
 		baseSha: pr.base.sha,
 		headRef: pr.head.ref,

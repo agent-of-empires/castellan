@@ -13,13 +13,13 @@ const model = (rule: string, text: string): Reason => ({ rule, text });
 
 /**
  * Rules decide; the model can only turn a `candidate` into `escalate`.
- * A failed review fails closed. Returns null for `skip`: nothing is posted.
+ * A failed review fails closed. Returns null for `skip` and `wait`: nothing is posted.
  */
 export function decide(
 	decision: Decision,
 	review?: ReviewResult,
 ): Outcome | null {
-	if (decision.outcome === "skip") return null;
+	if (decision.outcome === "skip" || decision.outcome === "wait") return null;
 	if (decision.outcome === "escalate") {
 		return { verdict: "escalate", reasons: decision.reasons };
 	}
