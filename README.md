@@ -36,18 +36,18 @@ The handler lives in `src/lambda.ts`, the per-PR pipeline in `src/pipeline.ts`. 
 
 ## Self-hosting without AWS
 
-Both adapters call the same entry as the Lambda adapter will: `runForPr` and `runForIssue` in `src/run.ts`. They are separate bundles (`dist/action`, `dist/cli`), never part of the Lambda zip.
+Both adapters call the same entry as the Lambda: `evaluatePull` and `triageIssue` in `src/pipeline.ts`. They are separate bundles (`dist/action`, `dist/cli`), never part of the Lambda zip.
 
-**GitHub Action.** Copy [templates/castellan.yml](templates/castellan.yml) into `.github/workflows/`. It runs on `pull_request`, `issues`, and a 30 minute `schedule` sweep of every open non-draft PR and every issue labeled `needs-triage`.
+**GitHub Action.** Copy [templates/castellan.yml](templates/castellan.yml) into `.github/workflows/`. It runs on `pull_request`, `issues`, and a 30 minute `schedule` sweep of every open PR (the rules skip drafts) and every issue labeled `needs-triage`; one item failing does not stop the rest, and the run exits 1 if any failed.
 
 - `pull_request_target` is refused in code, because it would give write secrets to fork code. A `pull_request` from a fork does nothing (its token is read-only); the next sweep evaluates it.
-- Credentials are inputs: `github-token` (default `github.token`), or `app-id`, `installation-id`, `private-key` and `bot-login` (an App wins). `mode` overrides `.castellan.yml`, which is otherwise read from the base SHA; a value other than `off`, `shadow` or `enforce` fails the run.
+- Credentials are inputs: `github-token` (default `github.token`), or `app-id`, `installation-id` and `private-key` (an App wins; its bot login comes from `GET /app`). `bot-login` only names the identity for the token path and defaults to `github-actions[bot]`. `mode` overrides `.castellan.yml`, which is otherwise read from the base SHA; a value other than `off`, `shadow` or `enforce` fails the run.
 - The workflow needs `contents: read`, `pull-requests: write`, `issues: write`, `statuses: write` and `checks: read` (the template sets them).
 - A workflow token cannot approve, cannot write org project fields and cannot read org teams, so `enforce`, triage fields and `teams.maintainers` / `teams.protected` all need an App.
 - `anthropic-api-key` only matters when `.castellan.yml` sets `llm.provider: anthropic`; the default, bedrock, needs ambient AWS credentials.
 - The composite action runs `pnpm install` and `pnpm build` on every run and sets up Node 22, which replaces the caller's Node version. Move to a release-built `dist` if either matters.
 
-**CLI.** `castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]` after `pnpm build` (`node dist/cli/index.mjs`). Credentials come from `GITHUB_TOKEN`, or `CASTELLAN_APP_ID`, `CASTELLAN_INSTALLATION_ID`, `CASTELLAN_PRIVATE_KEY` and `CASTELLAN_BOT_LOGIN`; plus `ANTHROPIC_API_KEY`. `--mode` overrides the base SHA config. `--dry-run` forces `shadow` regardless of `--mode`, writes nothing to GitHub (REST writes are swallowed, GraphQL mutations throw), and prints the brief it would have posted.
+**CLI.** `castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]` after `pnpm build` (`node dist/cli/index.mjs`). Credentials come from `GITHUB_TOKEN`, or `CASTELLAN_APP_ID`, `CASTELLAN_INSTALLATION_ID`, `CASTELLAN_PRIVATE_KEY` (and optionally `CASTELLAN_BOT_LOGIN` for the token path); plus `ANTHROPIC_API_KEY`. `--mode` overrides the base SHA config. `--dry-run` forces `shadow` regardless of `--mode`, writes nothing to GitHub (the pipeline runs with `dryRun`, REST writes are swallowed and GraphQL mutations throw), and prints the brief it would have posted.
 
 ## Eval
 

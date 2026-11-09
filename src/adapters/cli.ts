@@ -2,16 +2,12 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { renderComment } from "../comment.js";
 import type { Config } from "../config.js";
-import {
-	dryRun,
-	failed,
-	type Item,
-	type RunDeps,
-	runForIssue,
-	runForPr,
-} from "../run.js";
+import type { GithubTransport } from "../github.js";
+import { type Env, evaluatePull, triageIssue } from "../pipeline.js";
 import { type AuthInput, parseMode, resolveAuth } from "./auth.js";
+import { failed } from "./result.js";
 
 export const USAGE =
 	"usage: castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]";
@@ -55,24 +51,58 @@ export function parseCli(argv: string[]): CliArgs {
 	};
 }
 
-/** Returns the exit code. `--dry-run` prints the comment it would post and writes nothing. */
+/**
+ * Reads pass through; a REST write is swallowed and its body printed, and a
+ * GraphQL mutation throws. A second net under `dryRun: true`, which already skips writes.
+ */
+export function guarded(
+	transport: GithubTransport,
+	print: (text: string) => void,
+): GithubTransport {
+	const request = async (route: string, params?: { body?: string }) => {
+		if (route.startsWith("GET ")) {
+			return transport.request(route as never, params as never);
+		}
+		if (params?.body) print(params.body);
+		return { data: { id: 0, html_url: "" } };
+	};
+	return {
+		request: request as unknown as GithubTransport["request"],
+		paginate: transport.paginate,
+		graphql: ((query: string, variables?: Record<string, unknown>) => {
+			if (/^\s*mutation\b/.test(query)) {
+				throw new Error("dry run refuses GraphQL mutations");
+			}
+			return transport.graphql(query, variables);
+		}) as GithubTransport["graphql"],
+	};
+}
+
+/** Returns the exit code. `--dry-run` forces shadow, writes nothing and prints the brief it would have posted. */
 export async function execute(
 	args: CliArgs,
-	base: Omit<RunDeps, "repo" | "mode">,
+	base: Pick<Env, "transport" | "login" | "llm">,
 	print: (text: string) => void = console.log,
 ): Promise<number> {
-	let deps: RunDeps = { ...base, repo: args.repo, mode: args.mode };
-	if (args.dryRun) deps = dryRun(deps, print);
-	const result = await (args.issue ? runForIssue : runForPr)(deps, args.number);
-	const item: Item = {
+	const env: Env = args.dryRun
+		? { ...base, mode: "shadow", transport: guarded(base.transport, print) }
+		: { ...base, mode: args.mode };
+	const opts = { dryRun: args.dryRun };
+	const result = args.issue
+		? await triageIssue(env, args.repo, args.number, opts)
+		: await evaluatePull(env, args.repo, args.number, opts);
+	print(
+		typeof result === "object" && "brief" in result && result.brief
+			? renderComment(result.brief)
+			: JSON.stringify(result),
+	);
+	return failed({
 		kind: args.issue ? "issue" : "pr",
 		number: args.number,
 		result,
-	};
-	if (!args.dryRun || result.status !== "done") {
-		print(JSON.stringify(item));
-	}
-	return failed(item) ? 1 : 0;
+	})
+		? 1
+		: 0;
 }
 
 export function authFromEnv(env: NodeJS.ProcessEnv): AuthInput {

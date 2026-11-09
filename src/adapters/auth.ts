@@ -1,7 +1,7 @@
 import { Octokit } from "octokit";
 import type { Config } from "../config.js";
-import { installationTransport } from "../github.js";
-import type { RunDeps } from "../run.js";
+import { appLogin, installationTransport } from "../github.js";
+import type { Env } from "../pipeline.js";
 
 const MODES = ["off", "shadow", "enforce"];
 
@@ -22,27 +22,26 @@ export interface AuthInput {
 	appId?: string;
 	installationId?: string;
 	privateKey?: string;
-	/** The identity castellan acts as: `<slug>[bot]` for an App, `github-actions[bot]` for the workflow token. */
+	/** Token path only: the login castellan acts as. An App's login comes from `GET /app`. */
 	botLogin?: string;
 }
 
-/** App credentials win over a token. An App must name its bot login, so its own approval is found again. */
+/** App credentials win over a token. */
 export async function resolveAuth(
 	i: AuthInput,
-): Promise<Pick<RunDeps, "transport" | "author">> {
+): Promise<Pick<Env, "transport" | "login">> {
 	if (i.appId || i.installationId || i.privateKey) {
-		if (!(i.appId && i.installationId && i.privateKey && i.botLogin)) {
-			throw new Error(
-				"app auth needs app id, installation id, private key and bot login",
-			);
+		if (!(i.appId && i.installationId && i.privateKey)) {
+			throw new Error("app auth needs app id, installation id and private key");
 		}
+		const creds = {
+			appId: Number(i.appId),
+			installationId: Number(i.installationId),
+			privateKey: i.privateKey,
+		};
 		return {
-			transport: await installationTransport({
-				appId: Number(i.appId),
-				installationId: Number(i.installationId),
-				privateKey: i.privateKey,
-			}),
-			author: { login: i.botLogin },
+			transport: await installationTransport(creds),
+			login: await appLogin(creds),
 		};
 	}
 	if (!i.token) {
@@ -52,6 +51,6 @@ export async function resolveAuth(
 	}
 	return {
 		transport: new Octokit({ auth: i.token }),
-		author: { login: i.botLogin ?? "github-actions[bot]" },
+		login: i.botLogin ?? "github-actions[bot]",
 	};
 }

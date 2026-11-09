@@ -29,4 +29,3 @@ jobs:
           # app-id: ${{ vars.CASTELLAN_APP_ID }}
           # installation-id: ${{ vars.CASTELLAN_INSTALLATION_ID }}
           # private-key: ${{ secrets.CASTELLAN_PRIVATE_KEY }}
-          # bot-login: your-app[bot]

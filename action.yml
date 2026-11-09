@@ -11,7 +11,7 @@ inputs:
   private-key:
     description: GitHub App private key
   bot-login:
-    description: Login castellan acts as (`<slug>[bot]`). Required with an App.
+    description: Login castellan acts as with a token. Defaults to github-actions[bot]; ignored with an App, whose login comes from GET /app.
   anthropic-api-key:
     description: "Anthropic API key. Only used when .castellan.yml sets llm.provider to anthropic; the default is bedrock, which ignores it and needs ambient AWS credentials."
   mode:

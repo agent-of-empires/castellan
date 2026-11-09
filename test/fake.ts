@@ -52,6 +52,7 @@ export function fake(w: World = {}) {
 			if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}") {
 				return {
 					data: {
+						state: "open",
 						title: "t",
 						body: "the issue",
 						labels: [{ name: "bug" }],

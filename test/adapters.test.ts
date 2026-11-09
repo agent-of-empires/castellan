@@ -12,16 +12,17 @@ import {
 	authFromEnv,
 	cli,
 	execute,
+	guarded,
 	parseCli,
 	USAGE,
 } from "../src/adapters/cli.js";
+import { failed } from "../src/adapters/result.js";
 import type { GithubTransport } from "../src/github.js";
 import type { MessagesClient } from "../src/llm.js";
-import { dryRun } from "../src/run.js";
 import { COMMENT, fake, llm, merge } from "./fake.js";
 
 const repo = { owner: "o", repo: "r" };
-const author = { login: "castellan[bot]" };
+const login = "castellan[bot]";
 const ISSUE = "GET /repos/{owner}/{repo}/issues/{issue_number}";
 
 /** Serves a draft PR under `mode: off`, so nothing past the config is reached. */
@@ -57,7 +58,8 @@ describe("action events", () => {
 			handleEvent(
 				"pull_request_target",
 				{},
-				{ transport: f.transport, repo, author },
+				{ transport: f.transport, login },
+				repo,
 			),
 		).rejects.toThrow(/pull_request_target/);
 		expect(f.request).not.toHaveBeenCalled();
@@ -69,10 +71,11 @@ describe("action events", () => {
 		const items = await handleEvent(
 			"pull_request",
 			{ pull_request: { number: 3, head: { repo: { fork: false } } } },
-			{ transport: f.transport, repo, author, llm: m.deps },
+			{ transport: f.transport, login, llm: m.deps },
+			repo,
 		);
 		expect(items).toMatchObject([
-			{ kind: "pr", number: 3, result: { status: "done" } },
+			{ kind: "pr", number: 3, result: { status: "acted" } },
 		]);
 		expect(f.routes()).toContain(COMMENT);
 	});
@@ -82,7 +85,8 @@ describe("action events", () => {
 		const items = await handleEvent(
 			"pull_request",
 			{ pull_request: { number: 3, head: { repo: { fork: true } } } },
-			{ transport: f.transport, repo, author },
+			{ transport: f.transport, login },
+			repo,
 		);
 		expect(items).toEqual([]);
 		expect(f.request).not.toHaveBeenCalled();
@@ -90,13 +94,37 @@ describe("action events", () => {
 
 	it("routes issues and rejects unknown events", async () => {
 		const f = offTransport();
-		const deps = { transport: f.transport, repo, author };
-		const items = await handleEvent("issues", { issue: { number: 4 } }, deps);
+		const env = { transport: f.transport, login };
+		const items = await handleEvent(
+			"issues",
+			{ issue: { number: 4 } },
+			env,
+			repo,
+		);
 		expect(items).toMatchObject([{ kind: "issue", number: 4 }]);
-		await expect(handleEvent("push", {}, deps)).rejects.toThrow(/unsupported/);
-		await expect(handleEvent("pull_request", {}, deps)).rejects.toThrow(
+		await expect(handleEvent("push", {}, env, repo)).rejects.toThrow(
+			/unsupported/,
+		);
+		await expect(handleEvent("pull_request", {}, env, repo)).rejects.toThrow(
 			/number/,
 		);
+	});
+
+	it("sweep records an item's failure and carries on", async () => {
+		const f = fake();
+		const items = await handleEvent(
+			"workflow_dispatch",
+			{},
+			{ transport: f.transport, login, llm: llm(merge).deps },
+			repo,
+		);
+		expect(items.map((i) => `${i.kind}${i.number}`)).toEqual([
+			"pr1",
+			"pr2",
+			"issue9",
+		]);
+		expect(items.map(failed)).toEqual([false, false, true]);
+		expect(items[2]?.error).toBeDefined();
 	});
 
 	it("sweeps on schedule", async () => {
@@ -104,7 +132,8 @@ describe("action events", () => {
 		const items = await handleEvent(
 			"schedule",
 			{},
-			{ transport: f.transport, repo, author },
+			{ transport: f.transport, login },
+			repo,
 		);
 		expect(items).toEqual([]);
 	});
@@ -150,7 +179,7 @@ describe("action env", () => {
 describe("auth", () => {
 	it("defaults a token to the workflow bot", async () => {
 		const a = await resolveAuth({ token: "t" });
-		expect(a.author.login).toBe("github-actions[bot]");
+		expect(a.login).toBe("github-actions[bot]");
 	});
 
 	it("rejects partial app credentials and no credentials, naming the env vars", async () => {
@@ -221,7 +250,7 @@ describe("cli", () => {
 		const out: string[] = [];
 		const code = await execute(
 			{ repo, number: 3, issue: false, dryRun: true, mode: "enforce" },
-			{ transport: f.transport, author, llm: llm(merge).deps },
+			{ transport: f.transport, login, llm: llm(merge).deps },
 			(t) => out.push(t),
 		);
 		expect(code).toBe(0);
@@ -295,7 +324,9 @@ describe("dry run guard", () => {
 			if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
 				return { data: "mode: enforce" };
 			}
-			if (route === ISSUE) return { data: { title: "t", body: "b" } };
+			if (route === ISSUE) {
+				return { data: { state: "open", title: "t", body: "b" } };
+			}
 			return { data: {} };
 		});
 		const transport = {
@@ -319,7 +350,7 @@ describe("dry run guard", () => {
 		const out: string[] = [];
 		const code = await execute(
 			{ repo, number: 7, issue: true, dryRun: true },
-			{ transport: w.transport, author, llm: { client: w.client } },
+			{ transport: w.transport, login, llm: { client: w.client } },
 			(t) => out.push(t),
 		);
 		expect(code).toBe(0);
@@ -328,15 +359,12 @@ describe("dry run guard", () => {
 		expect(
 			w.request.mock.calls.some((c) => !String(c[0]).startsWith("GET ")),
 		).toBe(false);
-		expect(out.join("\n")).toContain("Castellan triage (shadow)");
+		expect(out.join("\n")).toContain('"proposal"');
 	});
 
 	it("refuses a GraphQL mutation outright and passes queries through", async () => {
 		const w = triageWorld();
-		const { transport } = dryRun(
-			{ transport: w.transport, repo, author },
-			() => {},
-		);
+		const transport = guarded(w.transport, () => {});
 		expect(() => transport.graphql("mutation { x }")).toThrow(/refuses/);
 		expect(() => transport.graphql("  \n mutation($a: ID!) { x }")).toThrow(
 			/refuses/,
