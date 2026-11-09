@@ -247,26 +247,31 @@ export function createHandler(deps: Deps) {
 				.filter((r) => !r.endsWith("/*"))
 				.map((r) => [r.toLowerCase(), r]),
 		);
+		let listingFailed = false;
 		if (owners.size) {
-			const repos = await e.transport.paginate(
-				"GET /installation/repositories",
-				{
-					per_page: 100,
-				},
-			);
-			for (const r of repos) {
-				if (!r.archived && owners.has(r.owner.login.toLowerCase())) {
-					targets.set(r.full_name.toLowerCase(), r.full_name);
+			try {
+				const repos = await e.transport.paginate(
+					"GET /installation/repositories",
+					{ per_page: 100 },
+				);
+				for (const r of repos) {
+					if (!r.archived && owners.has(r.owner.login.toLowerCase())) {
+						targets.set(r.full_name.toLowerCase(), r.full_name);
+					}
 				}
+			} catch (err) {
+				listingFailed = true;
+				console.error("sweep: listing installation repos failed", err);
 			}
 		}
-		return [...targets.values()];
+		return { targets: [...targets.values()], listingFailed };
 	}
 
 	async function sweep(ctx?: LambdaContext) {
 		const e = await getEnv();
-		let infra = 0;
-		for (const full of await sweepTargets(e)) {
+		const { targets, listingFailed } = await sweepTargets(e);
+		let infra = listingFailed ? 1 : 0;
+		for (const full of targets) {
 			if (outOfTime(ctx)) {
 				console.error(`sweep stopped before ${full}: out of time`);
 				break;

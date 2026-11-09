@@ -383,7 +383,37 @@ describe("owner/* entries", () => {
 	});
 });
 
+describe("non-wildcard patterns", () => {
+	it.each(["*", "*/*", "o/pre*"])("%s is not a wildcard", async (entry) => {
+		const { handler } = setup([entry]);
+		const res = await handler(
+			hook("pull_request", {
+				action: "opened",
+				repository: { ...repository, full_name: "o/prefix", name: "prefix" },
+				pull_request: { number: 1 },
+			}),
+		);
+		expect(res.body).toMatch(/not allowed/);
+		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+});
+
 describe("sweep", () => {
+	it("still sweeps exact entries when the installation listing fails, and replies 500", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler, transport } = setup(["o/*", "x/y"]);
+		transport.paginate.mockRejectedValue(new Error("rate limited"));
+		const res = await handler({ source: "sweep" });
+		expect(res.statusCode).toBe(500);
+		expect(console.error).toHaveBeenCalledWith(
+			"sweep: listing installation repos failed",
+			expect.any(Error),
+		);
+		expect(vi.mocked(listWork).mock.calls.map((c) => c[1])).toEqual([
+			{ owner: "x", repo: "y" },
+		]);
+	});
+
 	it("runs the pipeline for every open PR and needs-triage issue", async () => {
 		const { handler } = setup();
 		const res = await handler({ source: "sweep" });
