@@ -33,10 +33,18 @@ export interface LambdaResult {
 
 interface Payload {
 	action?: string;
-	repository?: { full_name: string; owner: { login: string }; name: string };
+	repository?: {
+		id: number;
+		full_name: string;
+		owner: { login: string };
+		name: string;
+	};
 	pull_request?: { number: number };
 	review?: { user?: { login: string } | null };
-	check_suite?: { head_sha: string; pull_requests: { number: number }[] };
+	check_suite?: {
+		head_sha: string;
+		pull_requests: { number: number; base: { repo: { id: number } } }[];
+	};
 	issue?: { number: number };
 	sha?: string;
 	context?: string;
@@ -123,7 +131,13 @@ export function createHandler(deps: Deps) {
 			},
 		);
 		return pulls
-			.filter((pr) => pr.state === "open" && pr.head.sha === sha)
+			.filter(
+				(pr) =>
+					pr.state === "open" &&
+					pr.head.sha === sha &&
+					// Fork PRs list the fork's own PR numbers too.
+					pr.base.repo.full_name === p.repository?.full_name,
+			)
 			.map((pr) => pr.number);
 	};
 
@@ -144,9 +158,12 @@ export function createHandler(deps: Deps) {
 				// check_run is not routed: it fires once per check, check_suite once per head.
 				if (p.action !== "completed" || !p.check_suite) return [];
 				const { pull_requests, head_sha } = p.check_suite;
-				// Fork PRs come with an empty list; find them by head sha.
-				return pull_requests.length
-					? pull_requests.map((n) => n.number)
+				// Entries can belong to the head repo of a fork PR; keep ours only.
+				const ours = pull_requests.filter(
+					(n) => n.base.repo.id === p.repository?.id,
+				);
+				return ours.length
+					? ours.map((n) => n.number)
 					: pullsForSha(e, p, head_sha);
 			}
 			case "status":

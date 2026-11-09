@@ -17,6 +17,7 @@ const secrets = {
 	webhook_secret: SECRET,
 };
 const repository = {
+	id: 100,
 	full_name: "o/r",
 	owner: { login: "o" },
 	name: "r",
@@ -142,6 +143,8 @@ describe("routing", () => {
 		const res = await s.handler(hook(name, { repository, ...payload }));
 		return { ...s, res };
 	};
+	const ours = { repo: { full_name: "o/r" } };
+	const fork = { repo: { full_name: "someone/r" } };
 	const pulls = () => vi.mocked(evaluatePull).mock.calls.map((c) => c[2]);
 
 	it.each(["opened", "synchronize", "reopened", "ready_for_review"])(
@@ -175,7 +178,11 @@ describe("routing", () => {
 	it("check_suite completed routes every attached PR", async () => {
 		const check_suite = {
 			head_sha: "abc",
-			pull_requests: [{ number: 7 }, { number: 8 }],
+			pull_requests: [
+				{ number: 7, base: { repo: { id: 100 } } },
+				{ number: 8, base: { repo: { id: 100 } } },
+				{ number: 1, base: { repo: { id: 999 } } },
+			],
 		};
 		await run("check_suite", { action: "completed", check_suite });
 		await run("check_suite", { action: "requested", check_suite });
@@ -185,8 +192,9 @@ describe("routing", () => {
 	it("check_suite from a fork finds PRs by head sha", async () => {
 		const s = setup();
 		s.transport.paginate.mockResolvedValue([
-			{ number: 21, state: "open", head: { sha: "forkhead" } },
-			{ number: 22, state: "open", head: { sha: "other" } },
+			{ number: 21, state: "open", head: { sha: "forkhead" }, base: ours },
+			{ number: 22, state: "open", head: { sha: "other" }, base: ours },
+			{ number: 1, state: "open", head: { sha: "forkhead" }, base: fork },
 		]);
 		await s.handler(
 			hook("check_suite", {
@@ -206,6 +214,24 @@ describe("routing", () => {
 		);
 	});
 
+	it("check_suite with only fork entries falls back to the sha lookup", async () => {
+		const s = setup();
+		s.transport.paginate.mockResolvedValue([
+			{ number: 21, state: "open", head: { sha: "h" }, base: ours },
+		]);
+		await s.handler(
+			hook("check_suite", {
+				repository,
+				action: "completed",
+				check_suite: {
+					head_sha: "h",
+					pull_requests: [{ number: 1, base: { repo: { id: 999 } } }],
+				},
+			}),
+		);
+		expect(pulls()).toEqual([21]);
+	});
+
 	it("check_run is not routed", async () => {
 		const { res } = await run("check_run", {
 			action: "completed",
@@ -218,9 +244,9 @@ describe("routing", () => {
 	it("status looks up open PRs on that head", async () => {
 		const s = setup();
 		s.transport.paginate.mockResolvedValue([
-			{ number: 3, state: "open", head: { sha: "abc" } },
-			{ number: 4, state: "open", head: { sha: "newer" } },
-			{ number: 5, state: "closed", head: { sha: "abc" } },
+			{ number: 3, state: "open", head: { sha: "abc" }, base: ours },
+			{ number: 4, state: "open", head: { sha: "newer" }, base: ours },
+			{ number: 5, state: "closed", head: { sha: "abc" }, base: ours },
 		]);
 		await s.handler(
 			hook("status", { repository, sha: "abc", context: "ci/test" }),
