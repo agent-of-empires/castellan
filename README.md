@@ -21,10 +21,8 @@ While `needs-triage` is present, castellan fills only the missing priority, `are
 
 `dist/lambda/index.mjs`, handler `index.handler`, Node 22 ESM, behind a Function URL with auth `NONE`. The `X-Hub-Signature-256` HMAC is verified (timing-safe) on the raw body before anything is parsed; a bad one gets 401 and no side effects.
 
-| Env | Meaning |
-| --- | --- |
-| `CASTELLAN_APP_SECRET_ARN` | Secrets Manager JSON with `app_id`, `installation_id`, `private_key`, `webhook_secret`. Read once per container. |
-| `CASTELLAN_REPOS` | Comma list of `owner/repo` the bot acts on. Empty is a kill switch: every event and sweep is ignored. |
+- `CASTELLAN_APP_SECRET_ARN`: Secrets Manager JSON with `app_id`, `installation_id`, `private_key`, `webhook_secret`. Read once per container.
+- `CASTELLAN_REPOS`: comma list of `owner/repo` the bot acts on. Empty is a kill switch: every event and sweep is ignored.
 
 Routed webhooks: `pull_request` (opened, synchronize, reopened, ready_for_review), `check_suite` and `check_run` (completed), `pull_request_review` (submitted), `status`, and `issues` (opened, triage). Castellan's own `castellan` status and its own approvals are ignored so they cannot re-trigger it. The `{"source":"sweep"}` EventBridge event runs the same pipeline over every open PR and `needs-triage` issue in `CASTELLAN_REPOS`. The App login used to find its own comment and approval is `<slug>[bot]` from `GET /app`.
 
