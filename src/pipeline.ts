@@ -10,7 +10,12 @@ import {
 import { type LlmDeps, promptHash, review } from "./llm.js";
 import { type CodeownersRule, type Context, evaluate } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
-import { findStickyComment, STATUS_CONTEXT, statusFor } from "./status.js";
+import {
+	findStickyComment,
+	STATUS_CONTEXT,
+	statusFor,
+	waitingStatus,
+} from "./status.js";
 import { type TriageResult, triage } from "./triage.js";
 import { decide } from "./verdict.js";
 
@@ -87,7 +92,7 @@ const getIssue = (env: Env, { owner, repo }: Repo, issue_number: number) =>
 		.catch(() => null);
 
 export interface PullResult {
-	status: "closed" | "skipped" | "acted" | "dry_run";
+	status: "closed" | "skipped" | "waiting" | "acted" | "dry_run";
 	brief?: Brief;
 	act?: ActResult;
 }
@@ -161,6 +166,19 @@ export async function evaluatePull(
 				outcome: "escalate",
 				reasons: [{ rule: "config_invalid", text: error }],
 			};
+		}
+
+		if (decision.outcome === "wait") {
+			if (!opts.dryRun) {
+				await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
+					owner,
+					repo,
+					sha: snapshot.headSha,
+					context: STATUS_CONTEXT,
+					...waitingStatus(config.mode),
+				});
+			}
+			return { status: "waiting" };
 		}
 
 		const sticky = await findStickyComment(transport, repoRef, pullNumber, {
