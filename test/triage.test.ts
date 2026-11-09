@@ -443,6 +443,7 @@ describe("triage", () => {
 		const { r } = await run(w, "mode: enforce\nproject: { sizeField: Effort }");
 		expect(r).toMatchObject({ ok: true });
 		expect(sets(w.graphql).map((s) => s.field)).toEqual(["fp", "fs"]);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
 		expect(commentBody(w.request)).toContain(
 			"Not set: Effort (no such field in the project)",
 		);
