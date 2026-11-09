@@ -4,7 +4,7 @@ import type { GithubTransport, Repo } from "./github.js";
 
 export const CONFIG_PATH = ".castellan.yml";
 
-const schema = z.strictObject({
+const base = z.strictObject({
 	mode: z.enum(["off", "shadow", "enforce"]).default("shadow"),
 	limits: z
 		.strictObject({
@@ -50,10 +50,15 @@ const schema = z.strictObject({
 			roadmapField: z.string().default("Roadmap"),
 		})
 		.prefault({}),
+	llm: z
+		.strictObject({
+			provider: z.enum(["anthropic", "bedrock"]).default("bedrock"),
+		})
+		.prefault({}),
 	models: z
 		.strictObject({
-			review: z.string().default("claude-sonnet-5-5"),
-			triage: z.string().default("claude-haiku-5-5"),
+			review: z.string().optional(),
+			triage: z.string().optional(),
 		})
 		.prefault({}),
 	prompt: z
@@ -63,6 +68,39 @@ const schema = z.strictObject({
 		})
 		.prefault({}),
 });
+
+const BEDROCK_ID = /^(anthropic|us|global)\./;
+const DEFAULT_MODELS = {
+	anthropic: { review: "claude-sonnet-5-5", triage: "claude-haiku-5-5" },
+	bedrock: {
+		review: "us.anthropic.claude-sonnet-5-5",
+		triage: "us.anthropic.claude-haiku-5-5",
+	},
+};
+
+const schema = base.transform((c, ctx) => {
+	const { provider } = c.llm;
+	const models = { ...DEFAULT_MODELS[provider], ...stripUndefined(c.models) };
+	if (provider === "bedrock") {
+		for (const key of ["review", "triage"] as const) {
+			if (!BEDROCK_ID.test(models[key])) {
+				ctx.issues.push({
+					code: "custom",
+					message: `models.${key} must start with anthropic., us. or global. when llm.provider is bedrock`,
+					input: models[key],
+					path: ["models", key],
+				});
+			}
+		}
+	}
+	return { ...c, models };
+});
+
+function stripUndefined<T extends Record<string, string | undefined>>(o: T) {
+	return Object.fromEntries(
+		Object.entries(o).filter(([, v]) => v !== undefined),
+	) as { [K in keyof T]?: string };
+}
 
 export type Config = z.infer<typeof schema>;
 
