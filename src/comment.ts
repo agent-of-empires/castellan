@@ -3,7 +3,7 @@
  * hidden state block is always last, and the whole body stays under BODY_LIMIT.
  */
 import { type CacheKey, serializeBlock } from "./cache.js";
-import type { OkReviewResult } from "./llm.js";
+import type { FailureReason, OkReviewResult } from "./llm.js";
 import type { Snapshot } from "./snapshot.js";
 import type { Outcome } from "./verdict.js";
 
@@ -22,8 +22,12 @@ export interface Brief {
 	checks: Snapshot["checks"];
 	/** Absent when the model did not run or failed. */
 	review?: OkReviewResult;
+	/** Why the model call failed, when it did. */
+	reviewError?: FailureReason;
 	/** `cache` means `review.costUsd` was paid by an earlier run. */
 	source: "cache" | "llm" | "skipped";
+	/** Marks the verdict line as shadow. */
+	shadow?: boolean;
 	/** Plain team slug; never rendered as a mention. */
 	ownerTeam?: string;
 }
@@ -47,55 +51,101 @@ const at = (path?: string) =>
 	path ? ` (\`${reason(path).replace(/`/g, "")}\`)` : "";
 const yesNo = (b: boolean) => (b ? "yes" : "no");
 
-function conformance({ review }: Brief): string[] {
-	if (!review) return ["- Not evaluated by the model."];
+/** Rules decided when the verdict is an escalation that is not purely a model veto. */
+const rulesDecided = ({ outcome }: Brief) =>
+	outcome.verdict === "escalate" &&
+	!outcome.reasons.every((r) => r.rule.startsWith("llm_"));
+
+function modelIntro(brief: Brief): string[] {
+	const { review, source, reviewError } = brief;
+	if (!review) {
+		return [
+			source === "llm"
+				? `Model: unavailable${reviewError ? ` (${reviewError})` : ""}`
+				: "Model: not run (rules decided)",
+		];
+	}
 	const { intent_match, new_behavior } = review.verdict;
 	return [
+		`### Model review${rulesDecided(brief) ? " (advisory, rules decided the verdict)" : ""}`,
 		`- Matches the linked issue and description: ${yesNo(intent_match)}`,
 		`- Adds behavior beyond the request: ${yesNo(new_behavior)}`,
 	];
 }
 
-function correctness({ review }: Brief): string[] {
-	if (!review) return ["- Not evaluated by the model."];
-	const items = review.verdict.reasons.map(
-		(r) => `- [ ] **${r.severity}** ${escapeText(r.text)}${at(r.path)}`,
+function findings({ review }: Brief): string[] {
+	return (
+		review?.verdict.reasons.map(
+			(r) => `- **${r.severity}** ${escapeText(r.text)}${at(r.path)}`,
+		) ?? []
 	);
-	return items.length ? items : ["- No findings."];
 }
 
-function evidence({ checks }: Brief): string[] {
-	if (!checks.length) return ["No check runs on the head commit."];
+const RANK: Record<string, number> = { pending: 1, skipped: 2 };
+const PASSED = new Set(["success", "neutral"]);
+// Failed first, then pending, skipped, passed.
+const rank = (conclusion: string) =>
+	PASSED.has(conclusion) ? 3 : (RANK[conclusion] ?? 0);
+
+function checksSection({ checks }: Brief): string[] {
+	if (!checks.length) return ["Checks: none on the head commit."];
+	// The newest run (highest id) of a check replaces older ones.
+	const byName = new Map<string, Snapshot["checks"][number]>();
+	for (const c of checks) {
+		const prev = byName.get(c.name);
+		if (!prev || (c.id ?? 0) >= (prev.id ?? 0)) byName.set(c.name, c);
+	}
+	const latest = [...byName.values()];
+	const count = (r: number) =>
+		latest.filter((c) => rank(c.conclusion) === r).length;
+	const pending = count(1);
+	const summary = `Checks (${count(3)} passed, ${count(2)} skipped, ${count(0)} failed${pending ? `, ${pending} pending` : ""})`;
+	const rows = latest
+		.map((c, i) => ({ c, i }))
+		.sort((x, y) => rank(x.c.conclusion) - rank(y.c.conclusion) || x.i - y.i)
+		.map(({ c }) => c);
 	return [
+		`<details><summary>${summary}</summary>`,
+		"",
 		"| Check | Conclusion |",
 		"| --- | --- |",
-		...checks
+		...rows
 			.slice(0, MAX_CHECKS)
 			.map((c) => `| ${cell(c.name)} | ${cell(c.conclusion)} |`),
-		...(checks.length > MAX_CHECKS
-			? ["", `+${checks.length - MAX_CHECKS} more checks`]
+		...(rows.length > MAX_CHECKS
+			? ["", `+${rows.length - MAX_CHECKS} more checks`]
 			: []),
+		"",
+		"</details>",
 	];
 }
 
 function provenance({ key, review, source }: Brief): string[] {
-	const cost =
-		source === "llm" && review ? `, cost ${review.costUsd.toFixed(4)} USD` : "";
+	const run =
+		source === "cache"
+			? `cached from \`${key.headSha.slice(0, 7)}\``
+			: source === "llm"
+				? `fresh${review ? `, cost ${review.costUsd.toFixed(4)} USD` : ", failed"}`
+				: "not run";
 	return [
+		"<details><summary>Provenance</summary>",
+		"",
 		`- Head: \`${key.headSha.slice(0, 7)}\``,
 		`- Model: \`${escapeText(key.model)}\`, prompt \`${key.promptHash.slice(0, 12)}\``,
-		`- Source: ${source}${cost}`,
+		`- Model run: ${run}`,
+		"",
+		"</details>",
 	];
 }
 
 export function renderComment(brief: Brief): string {
-	const { outcome, key, review, ownerTeam } = brief;
+	const { outcome, key, review, ownerTeam, shadow } = brief;
 	const shown = outcome.reasons.slice(0, MAX_REASONS);
 	const more = outcome.reasons.length - shown.length;
 	const head = [
 		"## Castellan brief",
 		"",
-		`**Verdict: ${outcome.verdict}**${ownerTeam ? ` | Owner team: ${escapeText(ownerTeam)}` : ""}`,
+		`**Verdict: ${outcome.verdict}**${shadow ? " (shadow)" : ""}${ownerTeam ? ` | Owner team: ${escapeText(ownerTeam)}` : ""}`,
 		"",
 		...(shown.length
 			? [
@@ -104,20 +154,9 @@ export function renderComment(brief: Brief): string {
 					"",
 				]
 			: []),
-		"### Conformance",
-		...conformance(brief),
-		"",
-		"### Correctness",
+		...modelIntro(brief),
 	];
-	const tail = [
-		"",
-		"### Evidence",
-		...evidence(brief),
-		"",
-		"### Provenance",
-		...provenance(brief),
-		"",
-	];
+	const tail = ["", ...checksSection(brief), "", ...provenance(brief), ""];
 	const { promptHash: _h, ...llm } = review ?? {};
 	const block = serializeBlock({
 		verdict: outcome.verdict,
@@ -126,17 +165,17 @@ export function renderComment(brief: Brief): string {
 	});
 
 	// Last resort: drop findings so the block always survives intact and last.
-	const findings = correctness(brief);
+	const lines = findings(brief);
 	const fixed = [...head, ...tail].join("\n").length + block.length + 2;
 	const kept: string[] = [];
 	let used = fixed + 80;
-	for (const line of findings) {
+	for (const line of lines) {
 		if (used + line.length + 1 > BODY_LIMIT) break;
 		kept.push(line);
 		used += line.length + 1;
 	}
-	if (kept.length < findings.length) {
-		kept.push(`(+${findings.length - kept.length} more findings omitted)`);
+	if (kept.length < lines.length) {
+		kept.push(`(+${lines.length - kept.length} more findings omitted)`);
 	}
 	return `${[...head, ...kept, ...tail].join("\n")}\n${block}`;
 }

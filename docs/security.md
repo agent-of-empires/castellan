@@ -6,16 +6,16 @@ Castellan can approve and merge, so the design keeps a model, a PR author and a 
 
 `decide` in `src/verdict.ts` turns rule outcomes and the model result into a verdict:
 
-- Rules run first and decide. A rule escalation never reaches the model.
+- Rules run first and decide. In `enforce` a rule escalation never reaches the model. In `shadow` the model also reviews it, but only as advice shown in the brief; the verdict stays the rules'.
 - Only a PR that passed every rule becomes a `candidate`. The model can turn a candidate into `escalate` (`intent_match` false, `new_behavior` true, or a `blocker` finding). It has no output that means "merge".
 - A missing key, a missing price, a timeout, an SDK error or unparsable output all escalate. A failed review is never cached.
-- The model reply is parsed against a strict schema: two booleans and a list of findings. Anything else is `invalid_output`.
+- The model reply is parsed against a schema: two booleans and a list of findings (unknown keys inside a finding are dropped). Anything else is `invalid_output`.
 
 So the worst a manipulated model can do is escalate, or fail to veto a change the rules already allowed.
 
-## Policy comes from the base commit
+## Policy comes from the base branch
 
-- `.castellan.yml` is read at the PR's base SHA, never the head. A PR cannot loosen the gate it is judged by. The same base SHA is used to read CODEOWNERS for `teams.protected`.
+- `.castellan.yml` is read at the PR's base branch (`pull_request.base.ref`, so the current tip, not the possibly stale `base.sha`), never the head. A PR cannot loosen the gate it is judged by. The same ref is used to read CODEOWNERS for `teams.protected`.
 - A PR that changes `.castellan.yml` (at any depth), CODEOWNERS (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`) or anything under `.github/` always escalates (rules `castellan_config`, `codeowners_file`, `github_dir`), so those need a human.
 - The same check runs again inside `act` just before approving (`protected_guard`), together with `paths.protected`, `paths.release` and `teams.protected`, so a rule bug or reordering cannot let a protected change through.
 - An invalid config escalates and falls back to defaults (`shadow`), never to a more permissive state.
@@ -75,10 +75,10 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 
 ## What the budget cap does
 
-- `maxCostUsd` (`LlmDeps` in `src/llm.ts`) is a per call guard: before sending, castellan estimates the input cost as `(system + user characters) / 4` tokens at the model's input price, and a call above the cap fails with `budget`, which escalates. Output tokens are not estimated; `max_tokens` bounds them at 2,048.
+- `maxCostUsd` (`LlmDeps` in `src/llm.ts`) is a per call guard: before sending, castellan estimates the input cost as `(system + user characters) / 4` tokens at the model's input price, and a call above the cap fails with `budget`, which escalates. Output tokens are not estimated; `max_tokens` bounds them at 4,096.
 - No shipped entrypoint (Lambda, Action, CLI) sets `maxCostUsd`, so this cap is not active today.
 - The `budget` failure is also what an unpriced model id produces. That check is always active: only the four default model ids have a price, so any other `models.*` value fails closed.
-- Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs, no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda.
+- Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs in `enforce` (`shadow` makes one cached call per head for them too), no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda. A failed model call is never cached, so later `check_suite` events retry it until one succeeds.
 - The RFC's monthly Bedrock cap ($150 hard stop, alert at $75) is not in this repo. [self-hosting.md](self-hosting.md#infrastructure) places the AWS budget in the infra repo, not in the code. There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Triage has no cache, so a `needs-triage` issue costs one model call on every run that reaches it.
 
@@ -86,8 +86,8 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 
 The code is the reference. Where [RFC agent-of-empires#5502](https://github.com/agent-of-empires/agent-of-empires/issues/5502) differs:
 
-- Escalation does not request the CODEOWNERS team. It posts the brief and sets the status to `pending`.
-- Shadow mode sets the real status (`success` or `pending`), not a neutral one.
+- Escalation does not request the CODEOWNERS team. It posts the brief and, in `enforce`, sets the status to `pending`.
+- Shadow mode sets the status to `success` with a "shadow: would merge" or "shadow: would escalate" description for a verdict, and to `pending` with "shadow: waiting for CI" while CI is unsettled. It blocks nothing either way: castellan is not a required check.
 - The RFC's "protected and release CODEOWNERS paths" are two config lists (`paths.protected`, `paths.release`) plus files owned by `teams.protected`, not every CODEOWNERS entry.
 - The monthly budget is infra, not code (see above); the per call cap exists but is not wired.
 - The kill switches are `mode: off` and an empty `CASTELLAN_REPOS`.

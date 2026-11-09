@@ -24,6 +24,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	author: "alice",
 	authorClass: "maintainer",
 	draft: false,
+	mergeable: true,
 	baseRef: "main",
 	baseSha: "base1",
 	headRef: "fix/thing",
@@ -96,6 +97,69 @@ describe("skip rules", () => {
 	});
 });
 
+describe("wait", () => {
+	const waits = (over: Partial<Snapshot>, required = ["ci"]) => {
+		const d = run(snap(over), config, required);
+		expect(d.outcome).toBe("wait");
+		expect(rulesOf(d)).toEqual(d.reasons.map(() => "ci_unsettled"));
+	};
+
+	it("waits when a required check has no run yet", () => {
+		waits({ checks: [] });
+	});
+
+	it("waits while a required check is running and the rest passed", () => {
+		waits({
+			checks: [
+				{ name: "ci", conclusion: "in_progress" },
+				{ name: "lint", conclusion: "success" },
+			],
+		});
+	});
+
+	it("waits for an optional check that is queued", () => {
+		waits({
+			checks: [
+				{ name: "ci", conclusion: "success" },
+				{ name: "docs", conclusion: "queued" },
+			],
+		});
+	});
+
+	for (const conclusion of ["pending", "queued", "in_progress"]) {
+		it(`waits on ${conclusion}`, () => {
+			waits({ checks: [{ name: "ci", conclusion }] });
+		});
+	}
+
+	it("beats the escalate rules", () => {
+		waits({ checks: [], files: [file(".github/workflows/ci.yml")] });
+	});
+
+	it("is beaten by the skip rules", () => {
+		expect(run(snap({ checks: [], draft: true })).outcome).toBe("skip");
+	});
+
+	it("escalates a settled PR with a failed required check", () => {
+		const d = run(snap({ checks: [{ name: "ci", conclusion: "failure" }] }));
+		expect(d.outcome).toBe("escalate");
+		expect(d.reasons).toContainEqual({
+			rule: "required_check",
+			text: "required check ci did not pass",
+		});
+	});
+
+	it("escalates merge_conflict instead of waiting", () => {
+		const d = run(snap({ checks: [], mergeable: false }));
+		expect(d.outcome).toBe("escalate");
+		expect(rulesOf(d)).toEqual(["merge_conflict"]);
+	});
+
+	it("does not treat an unknown mergeable as a conflict", () => {
+		expect(run(snap({ mergeable: null })).outcome).toBe("candidate");
+	});
+});
+
 describe("escalate rules", () => {
 	const escalates = (
 		rule: string,
@@ -143,12 +207,8 @@ describe("escalate rules", () => {
 			{ name: "lint", conclusion: "failure" },
 		],
 	});
-	for (const conclusion of ["pending", "queued", "in_progress"]) {
-		escalates("check_pending", { checks: [{ name: "ci", conclusion }] });
-	}
-	escalates("required_check", { checks: [] });
 	escalates("required_check", {
-		checks: [{ name: "ci", conclusion: "skipped" }],
+		checks: [{ name: "ci", conclusion: "cancelled" }],
 	});
 	escalates("coderabbit", { codeRabbit: "CHANGES_REQUESTED" });
 	escalates("max_lines", { files: [file("src/a.ts", 60, 41)] });
@@ -223,6 +283,26 @@ describe("rule details", () => {
 			{ name: "b", conclusion: "neutral" },
 		];
 		expect(run(snap({ checks })).outcome).toBe("candidate");
+	});
+
+	it.each(["failure", "cancelled", "timed_out", "action_required", "stale"])(
+		"required check concluding %s escalates",
+		(conclusion) => {
+			const d = run(snap({ checks: [{ name: "ci", conclusion }] }));
+			expect(d.outcome).toBe("escalate");
+		},
+	);
+
+	it("treats a skipped required check as satisfied, like GitHub", () => {
+		const checks = [
+			{ name: "Cargo Test (macos)", conclusion: "skipped" },
+			{ name: "macOS gate", conclusion: "success" },
+		];
+		const d = run(snap({ checks }), config, [
+			"Cargo Test (macos)",
+			"macOS gate",
+		]);
+		expect(d.outcome).toBe("candidate");
 	});
 
 	it("a later approval clears human changes requested", () => {
@@ -318,6 +398,7 @@ describe("order", () => {
 	const required = ["ci", "lint"];
 	const everything = snap({
 		draft: true,
+		mergeable: false,
 		author: "dependabot[bot]",
 		baseRef: "release/1",
 		headRef: "release-plz-1",
@@ -363,6 +444,16 @@ describe("order", () => {
 			["non_default_base", { baseRef: "main" }],
 			["skip_branch", { headRef: "fix/x" }],
 			["mode_off", {}, on],
+			["merge_conflict", { mergeable: true }],
+			[
+				"ci_unsettled",
+				{
+					checks: [
+						{ name: "ci", conclusion: "failure" },
+						{ name: "lint", conclusion: "success" },
+					],
+				},
+			],
 			[
 				"castellan_config",
 				files(
@@ -389,16 +480,12 @@ describe("order", () => {
 			["protected_path", files("src/core/x.ts", "migrations/1.sql")],
 			["protected_owner", { files: [file("migrations/1.sql", 200)] }],
 			[
-				"check_failing",
+				"required_check",
 				{
-					checks: [
-						{ name: "ci", conclusion: "success" },
-						{ name: "lint", conclusion: "pending" },
-					],
+					checks: [...green, { name: "docs", conclusion: "failure" }],
 				},
 			],
-			["check_pending", { checks: [{ name: "ci", conclusion: "success" }] }],
-			["required_check", { checks: green }],
+			["check_failing", { checks: green }],
 			["coderabbit", { codeRabbit: null }],
 			[
 				"max_lines",

@@ -81,7 +81,8 @@ function world(
 		repoLabels?: string[];
 		pageSize?: number;
 		failSet?: boolean;
-		comments?: string[];
+		comments?: { body: string; login: string }[];
+		failComments?: boolean;
 	} = {},
 ) {
 	const log: string[] = [];
@@ -136,7 +137,12 @@ function world(
 	});
 	const paginate = vi.fn(async (route: string) => {
 		if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}/comments") {
-			return (opts.comments ?? []).map((body, i) => ({ id: i + 1, body }));
+			if (opts.failComments) throw new Error("comments unavailable");
+			return (opts.comments ?? []).map(({ body, login }, i) => ({
+				id: i + 1,
+				body,
+				user: { login },
+			}));
 		}
 		return [];
 	});
@@ -175,9 +181,14 @@ const run = async (
 	out: unknown = answer,
 ) => {
 	const m = llm(out);
-	const r = await triage(issue, await cfg(yaml), w.transport, repo, {
-		client: m.client,
-	});
+	const r = await triage(
+		issue,
+		await cfg(yaml),
+		w.transport,
+		repo,
+		{ client: m.client },
+		{ login: "castellan[bot]" },
+	);
 	return { r, m };
 };
 
@@ -190,24 +201,38 @@ describe("triage", () => {
 		expect(m.create).not.toHaveBeenCalled();
 	});
 
-	it("shadow only comments the proposal and says fit is not set", async () => {
+	it("triage.enabled false skips even when mode is enforce", async () => {
 		const w = world();
-		const { r } = await run(w, "");
-		expect(r).toMatchObject({
+		const { r, m } = await run(w, "mode: enforce\ntriage: { enabled: false }");
+		expect(r).toEqual({ ok: true, skipped: "off" });
+		expect(w.graphql).not.toHaveBeenCalled();
+		expect(m.create).not.toHaveBeenCalled();
+	});
+
+	it("mode off skips regardless of triage.enabled", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: off\ntriage: { enabled: true }");
+		expect(r).toEqual({ ok: true, skipped: "off" });
+		expect(w.graphql).not.toHaveBeenCalled();
+	});
+
+	it("applies labels and fields by default even with mode shadow", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: shadow");
+		expect(r).toEqual({
 			ok: true,
-			mode: "shadow",
-			proposal: {
+			proposal: expect.objectContaining({
 				labels: ["P1", "area:core", "bug"],
 				fields: [
 					{ field: "Priority", option: "P1" },
 					{ field: "Size", option: "M" },
 					{ field: "Status", option: "Ready" },
 				],
-			},
+			}),
 		});
-		expect(routes(w.request)).toEqual([COMMENT]);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
 		const body = commentBody(w.request);
-		expect(body).toContain("Proposed:");
+		expect(body).toContain("Applied:");
 		expect(body).toContain("`ready-for-agent`");
 		expect(body).toContain("Fit is not set by triage");
 	});
@@ -236,7 +261,7 @@ describe("triage", () => {
 		expect(routes(w.request)).not.toContain("ready-for-agent");
 	});
 
-	it("dryRun returns the proposal and writes nothing, even in enforce", async () => {
+	it("dryRun returns the proposal and writes nothing", async () => {
 		const w = world();
 		const m = llm(answer);
 		const r = await triage(
@@ -249,7 +274,6 @@ describe("triage", () => {
 		);
 		expect(r).toMatchObject({
 			ok: true,
-			mode: "enforce",
 			proposal: { labels: ["P1", "area:core", "bug"] },
 		});
 		expect(w.request).not.toHaveBeenCalled();
@@ -380,12 +404,6 @@ describe("triage", () => {
 		nothingWritten(absent);
 
 		const full = ["needs-triage", "P1", "area:core", "bug"];
-		const shadow = world({ labels: full, items: [done] });
-		const s = await run(shadow, "");
-		expect(s.r).toEqual({ ok: true, skipped: "nothing missing" });
-		expect(s.m.create).not.toHaveBeenCalled();
-		nothingWritten(shadow);
-
 		const enforce = world({ labels: full, items: [done] });
 		const e = await run(enforce, "mode: enforce");
 		expect(e.r).toEqual({ ok: true, skipped: "nothing missing" });
@@ -405,38 +423,49 @@ describe("triage", () => {
 		nothingWritten(w);
 	});
 
-	it("fails closed on an unknown option or field, writing nothing", async () => {
-		const noOption = world({
+	it("skips a project option that does not exist and comments it, writing the rest", async () => {
+		const w = world({
 			project: {
 				...project,
 				fields: {
 					nodes: [
 						field("fs", "Status", ["Ready", "Backlog"]),
-						field("fp", "Priority", ["P0", "P1", "P2", "P3"]),
-						field("fz", "Size", ["XS"]),
+						field("fp", "Priority", ["P0", "P1", "P2"]),
+						field("fz", "Size", ["XS", "S", "M", "L", "XL"]),
 					],
 				},
 			},
 		});
-		const a = await run(noOption, "mode: enforce");
-		expect(a.r).toEqual({
-			ok: false,
-			error: "unresolved",
-			detail: "option not found: Size = M",
+		const { r } = await run(w, "mode: enforce", { ...answer, priority: "P3" });
+		expect(r).toMatchObject({
+			ok: true,
+			proposal: {
+				labels: ["P3", "area:core", "bug"],
+				fields: [
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Backlog" },
+				],
+			},
 		});
-		nothingWritten(noOption);
-
-		const noField = world();
-		const b = await run(
-			noField,
-			"mode: enforce\nproject: { sizeField: Effort }",
+		expect(w.request.mock.calls[0]?.[1]).toMatchObject({
+			labels: ["P3", "area:core", "bug"],
+		});
+		expect(sets(w.graphql).map((s) => s.field)).toEqual(["fz", "fs"]);
+		expect(commentBody(w.request)).toContain(
+			'Not set: Priority (no option "P3" in the project)',
 		);
-		expect(b.r).toEqual({
-			ok: false,
-			error: "unresolved",
-			detail: "field not found: Effort",
-		});
-		nothingWritten(noField);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
+	});
+
+	it("skips a project field that does not exist and comments it", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: enforce\nproject: { sizeField: Effort }");
+		expect(r).toMatchObject({ ok: true });
+		expect(sets(w.graphql).map((s) => s.field)).toEqual(["fp", "fs"]);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
+		expect(commentBody(w.request)).toContain(
+			"Not set: Effort (no such field in the project)",
+		);
 	});
 
 	it.each([
@@ -457,6 +486,17 @@ describe("triage", () => {
 		nothingWritten(w);
 	});
 
+	it("ignores extra keys in reasons and readyForAgent", async () => {
+		const w = world();
+		const { r } = await run(w, "", {
+			...answer,
+			readyForAgent: { ...answer.readyForAgent, extra: "x" },
+			reasons: { ...answer.reasons, readyForAgent: "copied" },
+		});
+		expect(r).toMatchObject({ ok: true });
+		expect(commentBody(w.request)).not.toContain("copied");
+	});
+
 	it("rejects a type whose label is missing in the repo", async () => {
 		const w = world({ repoLabels: REPO_LABELS.filter((l) => l !== "bug") });
 		const { r } = await run(w, "mode: enforce");
@@ -467,7 +507,7 @@ describe("triage", () => {
 	it("reads every page of repo labels", async () => {
 		const w = world({ pageSize: 2 });
 		const { r, m } = await run(w, "");
-		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		expect(r).toMatchObject({ ok: true });
 		const p = m.create.mock.calls[0]?.[0] as { system: string };
 		expect(p.system).toContain("area:core, area:web");
 		const pages = w.graphql.mock.calls.filter(([q]) => q.includes("pageInfo"));
@@ -560,24 +600,78 @@ describe("triage", () => {
 		expect(w.request.mock.calls[0]?.[1]).toMatchObject({ labels: ["P0"] });
 	});
 
-	it("does not post the same proposal comment on a later sweep", async () => {
+	it.each([
+		["unconfigured", "Urgent", [...REPO_LABELS, "Urgent"]],
+		["missing repository label", "P0", REPO_LABELS.filter((l) => l !== "P0")],
+	])(
+		"rejects %s project priority before writes",
+		async (_name, priority, repoLabels) => {
+			const w = world({
+				repoLabels,
+				items: [
+					{
+						id: "IT",
+						project: { id: "PRJ" },
+						fieldValues: {
+							nodes: [
+								{ name: priority, field: { name: "Priority" } },
+								{ name: "Ready", field: { name: "Status" } },
+							],
+						},
+					},
+				],
+			});
+			const { r } = await run(w, "mode: enforce");
+			expect(r).toMatchObject({ ok: false, error: "unresolved" });
+			nothingWritten(w);
+		},
+	);
+
+	it("does not repeat an outcome when model reasons change", async () => {
 		const first = world();
 		await run(first, "");
-		const posted = commentBody(first.request);
-		expect(posted).not.toBe("");
-
-		const second = world({ comments: [posted] });
-		const { r } = await run(second, "");
-		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
+		});
+		await run(second, "", {
+			...answer,
+			readyForAgent: { suggest: true, reason: "different reason" },
+			reasons: {
+				priority: "different",
+				area: "different",
+				type: "different",
+				size: "different",
+			},
+		});
 		expect(routes(second.request)).not.toContain(COMMENT);
+	});
+
+	it("does not trust another author's matching marker", async () => {
+		const first = world();
+		await run(first, "");
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "someone-else" }],
+		});
+		await run(second, "");
+		expect(routes(second.request)).toContain(COMMENT);
 	});
 
 	it("posts again when the proposal changed", async () => {
 		const first = world();
 		await run(first, "", { ...answer, priority: "P3" });
-		const second = world({ comments: [commentBody(first.request)] });
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
+		});
 		await run(second, "");
 		expect(routes(second.request)).toContain(COMMENT);
+	});
+
+	it("makes no writes when comment lookup fails", async () => {
+		const w = world({ failComments: true });
+		await expect(run(w, "mode: enforce")).rejects.toThrow(
+			"comments unavailable",
+		);
+		nothingWritten(w);
 	});
 });
 

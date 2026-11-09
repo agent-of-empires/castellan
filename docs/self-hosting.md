@@ -10,7 +10,7 @@ Castellan runs three ways. All call the same pipeline (`evaluatePull` and `triag
 
 GitHub is the only supported provider today. Everything provider specific sits behind `src/github.ts`; other providers are tracked in [#35](https://github.com/agent-of-empires/castellan/issues/35).
 
-Start in `shadow` (the default). It posts the brief and a status and changes nothing else.
+Start the PR gate in `shadow` (the default). It posts the brief and a status and approves or merges nothing. Triage has no shadow mode and writes labels and project fields for real as soon as it runs; set `triage.enabled: false` to hold it back while the PR gate is in `shadow` (see [configuration](configuration.md#triage)).
 
 ## AWS Lambda
 
@@ -26,7 +26,7 @@ The Lambda, its role, the secret, the schedule and the AWS budget are defined in
   - `CASTELLAN_REPOS`: comma separated `owner/repo` list the bot acts on. Empty is a kill switch: every event and sweep is ignored.
   - There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Role permissions: read the secret (`secretsmanager:GetSecretValue`), and for `llm.provider: bedrock` (the default) invoke the configured models on Bedrock. The Anthropic provider cannot be used on Lambda today because there is no way to pass it a key; without one the review fails closed to `escalate`.
-- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs and issues labeled after they were opened.
+- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs.
 
 ### The secret
 
@@ -60,18 +60,20 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 
 ### What the Lambda handles
 
-| Event                 | Runs on                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                                |
-| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA  |
-| `pull_request_review` | `submitted`, except the App's own review                                               |
-| `status`              | any, except the `castellan` context itself                                             |
-| `issues`              | `opened` only: triage. An issue labeled `needs-triage` later is picked up by the sweep |
-| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                            |
+| Event                 | Runs on                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                               |
+| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA |
+| `pull_request_review` | `submitted`, except the App's own review                                              |
+| `status`              | any, except the `castellan` context itself                                            |
+| `issues`              | `opened`, `labeled`: triage. Without `needs-triage` it exits early; sweep is backup   |
+| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                           |
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
 
-Responses: 401 bad signature; 400 signed body that is not JSON; 200 for ignored events, repos not in `CASTELLAN_REPOS`, and per-PR failures (logged); 500 only for infrastructure failures (secrets, GitHub connection). If anything fails after the PR head is known, the `castellan` status is set to `pending` ("internal error") so a stale `success` cannot stay. GitHub marks a delivery as timed out after 10 seconds; the Lambda keeps running and finishes the work, the delivery just shows as failed.
+A PR whose CI has not settled (a required check has no run yet, or a run is queued or in progress) gets no comment and a `pending` `castellan` status reading "waiting for CI". The `check_suite` and `status` events and the sweep re-evaluate it, so nothing else is needed to resume.
+
+Responses: 401 bad signature; 400 signed body that is not JSON; 200 for ignored events, repos not in `CASTELLAN_REPOS`, and per-PR failures (logged); 500 only for infrastructure failures (secrets, GitHub connection). If anything fails after the PR head is known, the `castellan` status is set to `pending` ("internal error"; `success` in `shadow`) so a stale verdict cannot stay. GitHub marks a delivery as timed out after 10 seconds; the Lambda keeps running and finishes the work, the delivery just shows as failed.
 
 ### Release, then Deploy
 
@@ -109,7 +111,7 @@ One item failing does not stop the sweep; the run exits 1 if any item failed. Ru
 
 **Fork PRs.** `pull_request_target` is refused in code, because it would give write secrets to fork code. A `pull_request` from a fork does nothing (its token is read only); the next sweep evaluates it.
 
-**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. A label added with `github.token` does not start other workflows, so the sweep is what triages it.
+**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. In the Action, a label added with `github.token` does not start other workflows, so the sweep is what triages it. The Lambda triages on the `issues.labeled` event.
 
 **Cost of running it.** The composite action runs `pnpm install` and `pnpm build` on every run, and sets up Node 22, which replaces the caller's Node version. Move to a release built `dist` if either matters. The template pins a release (`@v0.1.0`).
 

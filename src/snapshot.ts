@@ -15,6 +15,8 @@ export interface Snapshot {
 	author: string;
 	authorClass: AuthorClass;
 	draft: boolean;
+	/** From the pull payload; null while GitHub is still computing it. */
+	mergeable: boolean | null;
 	baseRef: string;
 	baseSha: string;
 	headRef: string;
@@ -31,7 +33,8 @@ export interface Snapshot {
 	diff: string;
 	diffTruncated: boolean;
 	/** Every check run on the head SHA, not only required ones. */
-	checks: { name: string; conclusion: string }[];
+	/** `id` orders runs of one check; the API returns newest first. */
+	checks: { id?: number; name: string; conclusion: string }[];
 	/** State and commit only; review bodies are human text and are left out. */
 	reviews: { login: string; state: string; commitId: string }[];
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
@@ -47,6 +50,18 @@ function linkedIssues(body: string): number[] {
 		(m) => Number(m[1]),
 	);
 	return [...new Set(nums)];
+}
+
+/** GitHub answers 406 `too_large` when a PR diff exceeds 20000 lines. */
+function isDiffTooLarge(err: unknown): boolean {
+	const e = err as {
+		status?: number;
+		response?: { data?: { errors?: { code?: string }[] } };
+	};
+	return (
+		e.status === 406 &&
+		!!e.response?.data?.errors?.some((x) => x.code === "too_large")
+	);
 }
 
 /**
@@ -71,10 +86,15 @@ export async function buildSnapshot(
 	}
 	const headSha = pr.head.sha;
 	const [{ data: diff }, files, reviews, checks] = await Promise.all([
-		transport.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
-			...pull,
-			mediaType: { format: "diff" },
-		}),
+		transport
+			.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+				...pull,
+				mediaType: { format: "diff" },
+			})
+			.catch((err: unknown) => {
+				if (isDiffTooLarge(err)) return { data: undefined };
+				throw err;
+			}),
 		transport.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
 			...pull,
 			per_page: 100,
@@ -102,8 +122,12 @@ export async function buildSnapshot(
 	}));
 	const fullBody = pr.body ?? "";
 	const body = cap(fullBody, BODY_CAP);
-	// the diff media type makes `data` a string, which the typings do not know
-	const diffText = cap(diff as unknown as string, DIFF_CAP);
+	// the diff media type makes `data` a string, which the typings do not know;
+	// undefined means GitHub refused to render the diff, so treat it as truncated
+	const diffText =
+		diff === undefined
+			? { text: "", truncated: true }
+			: cap(diff as unknown as string, DIFF_CAP);
 	return {
 		title: pr.title,
 		body: body.text,
@@ -111,6 +135,7 @@ export async function buildSnapshot(
 		author: pr.user.login,
 		authorClass,
 		draft: pr.draft ?? false,
+		mergeable: pr.mergeable,
 		baseRef: pr.base.ref,
 		baseSha: pr.base.sha,
 		headRef: pr.head.ref,
@@ -126,6 +151,7 @@ export async function buildSnapshot(
 		diff: diffText.text,
 		diffTruncated: diffText.truncated,
 		checks: checks.map((c) => ({
+			id: c.id,
 			name: c.name,
 			conclusion: c.conclusion ?? "pending",
 		})),

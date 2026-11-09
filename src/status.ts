@@ -1,11 +1,32 @@
 import { MARKER } from "./cache.js";
+import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
 import type { Outcome } from "./verdict.js";
 
 export const STATUS_CONTEXT = "castellan";
 
-/** v1 never fails the status: an escalation waits for a human instead of blocking. */
-export function statusFor(verdict: Outcome["verdict"]) {
+/** GitHub rejects status descriptions longer than 140 characters. */
+const DESCRIPTION_LIMIT = 140;
+
+/**
+ * Never `failure`: an escalation waits for a human instead of blocking. Shadow is
+ * `success` for a verdict, because `pending` reads as "waiting for status to be reported".
+ */
+export function statusFor(
+	verdict: Outcome["verdict"],
+	mode: Config["mode"],
+	reason?: string,
+) {
+	if (mode === "shadow") {
+		const text =
+			verdict === "merge"
+				? "shadow: would merge"
+				: `shadow: would escalate${reason ? ` (${reason.replace(/\s+/g, " ")})` : ""}`;
+		return {
+			state: "success" as const,
+			description: Array.from(text).slice(0, DESCRIPTION_LIMIT).join(""),
+		};
+	}
 	return verdict === "merge"
 		? { state: "success" as const, description: "castellan: merge" }
 		: {
@@ -14,11 +35,18 @@ export function statusFor(verdict: Outcome["verdict"]) {
 			};
 }
 
+/** CI has not settled; always `pending`, also in shadow, so a stale verdict cannot stay. */
+export const waitingStatus = (mode: Config["mode"]) => ({
+	state: "pending" as const,
+	description: `${mode === "shadow" ? "shadow" : "castellan"}: waiting for CI`,
+});
+
 export async function setStatus(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
 	sha: string,
-	verdict: Outcome["verdict"],
+	outcome: Outcome,
+	mode: Config["mode"],
 	targetUrl: string,
 ) {
 	await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
@@ -27,7 +55,7 @@ export async function setStatus(
 		sha,
 		context: STATUS_CONTEXT,
 		target_url: targetUrl,
-		...statusFor(verdict),
+		...statusFor(outcome.verdict, mode, outcome.reasons[0]?.text),
 	});
 }
 

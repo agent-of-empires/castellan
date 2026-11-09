@@ -4,8 +4,8 @@ A stateless merge gate and issue triage bot for GitHub. It re-evaluates a PR on 
 event and posts one brief with a verdict (`merge`, `escalate`). Rules decide; the
 model can only veto.
 
-**Status:** v0.1.0. Runs in `shadow` by default (comments and a status, nothing
-approved or merged). `enforce` approves and queues a squash auto-merge, only for a
+**Status:** v0.1.0. Runs in `shadow` by default (a comment and an always `success`
+status, nothing approved or merged; the model also reviews rule escalations as advice). `enforce` approves and queues a squash auto-merge, only for a
 `merge` verdict. Design and rollout plan:
 [RFC agent-of-empires#5502](https://github.com/agent-of-empires/agent-of-empires/issues/5502).
 

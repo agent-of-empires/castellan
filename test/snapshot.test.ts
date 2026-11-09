@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { loadConfig } from "../src/config.js";
 import type { GithubTransport } from "../src/github.js";
+import { evaluate } from "../src/rules.js";
 import {
 	BODY_CAP,
 	buildSnapshot,
@@ -242,6 +244,55 @@ describe("guards", () => {
 		await expect(
 			buildSnapshot(transport, repo, 7, "maintainer"),
 		).rejects.toThrow(/406/);
+	});
+
+	const failDiff = (
+		request: ReturnType<typeof fixture>["request"],
+		err: object,
+	) => {
+		const impl = request.getMockImplementation();
+		request.mockImplementation(async (route, params) => {
+			if (params.mediaType) throw Object.assign(new Error("diff failed"), err);
+			return (impl as NonNullable<typeof impl>)(route, params);
+		});
+	};
+	const tooLarge = {
+		status: 406,
+		response: { data: { errors: [{ field: "diff", code: "too_large" }] } },
+	};
+
+	it("treats a 406 too_large diff as an empty truncated diff that escalates", async () => {
+		const { transport, request } = fixture({
+			checks: [{ name: "lint", conclusion: "success" }],
+		});
+		failDiff(request, tooLarge);
+		const s = await buildSnapshot(transport, repo, 7, "maintainer");
+		expect(s.diff).toBe("");
+		expect(s.diffTruncated).toBe(true);
+		const r = await loadConfig("main", async () => "");
+		if (!r.ok) throw new Error(r.error);
+		const d = evaluate(s, r.config, ["lint"], {
+			defaultBranch: "main",
+			codeowners: [],
+			bugIssues: [],
+		});
+		expect(d.outcome).toBe("escalate");
+		expect(d.reasons.map((x) => x.rule)).toEqual(["diff_truncated"]);
+	});
+
+	it.each([
+		{ status: 500 },
+		{ status: 404 },
+		{
+			status: 406,
+			response: { data: { errors: [{ code: "other" }] } },
+		},
+	])("still throws when the diff request fails with %o", async (err) => {
+		const { transport, request } = fixture();
+		failDiff(request, err);
+		await expect(
+			buildSnapshot(transport, repo, 7, "maintainer"),
+		).rejects.toThrow(/diff failed/);
 	});
 
 	it("fails closed when a paginated fetch is rejected", async () => {

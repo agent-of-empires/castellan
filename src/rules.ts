@@ -8,7 +8,7 @@ export interface Reason {
 }
 
 export interface Decision {
-	outcome: "skip" | "escalate" | "candidate";
+	outcome: "skip" | "wait" | "escalate" | "candidate";
 	reasons: Reason[];
 }
 
@@ -145,31 +145,42 @@ const protectedOwner: Rule = (s, c, _r, x) => {
 	return paths(owned, `owned by the protected team ${team}`);
 };
 
+/** Escalates before `wait`: without a merge ref, pull_request workflows never start. */
+const CONFLICT: Record<string, Rule> = {
+	merge_conflict: (s) => when(s.mergeable === false, "PR has merge conflicts"),
+};
+
+/** CI is unsettled: a required check has no run yet, or a run is still going. */
+const WAIT: Record<string, Rule> = {
+	ci_unsettled: (s, _c, required) => [
+		...required
+			.filter((name) => !s.checks.some((k) => k.name === name))
+			.map((name) => ({ text: `required check ${name} has not started` })),
+		...s.checks
+			.filter((k) => PENDING.includes(k.conclusion))
+			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
+	],
+};
+
 const ESCALATE: Record<string, Rule> = {
 	castellan_config: castellanConfig,
 	codeowners_file: codeownersFile,
 	github_dir: githubDir,
 	protected_path: protectedPath,
 	protected_owner: protectedOwner,
-	check_failing: (s) =>
-		s.checks
-			.filter((k) => ![...OK, ...PENDING].includes(k.conclusion))
-			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
-	check_pending: (s) =>
-		s.checks
-			.filter((k) => PENDING.includes(k.conclusion))
-			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	required_check: (s, _c, required) =>
 		required
 			.filter(
 				(name) =>
-					!s.checks.some(
-						(k) => k.name === name && PASSING.includes(k.conclusion),
-					),
+					!s.checks.some((k) => k.name === name && OK.includes(k.conclusion)),
 			)
 			.map((name) => ({
-				text: `required check ${name} is missing or skipped`,
+				text: `required check ${name} did not pass`,
 			})),
+	check_failing: (s) =>
+		s.checks
+			.filter((k) => !OK.includes(k.conclusion))
+			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	coderabbit: (s) =>
 		when(s.codeRabbit === "CHANGES_REQUESTED", "CodeRabbit requested changes"),
 	max_lines: (s, c) =>
@@ -236,19 +247,23 @@ export const touchesProtected = (s: Snapshot, c: Config, x: Context) =>
 		protectedOwner,
 	].some((rule) => rule(s, c, [], x).length > 0);
 
-export const RULE_IDS = [...Object.keys(SKIP), ...Object.keys(ESCALATE)];
+const STAGES = [
+	["skip", SKIP],
+	["escalate", CONFLICT],
+	["wait", WAIT],
+	["escalate", ESCALATE],
+] as const;
 
-/** Deny by default; first rule that hits decides. `candidate` still needs the model. */
+export const RULE_IDS = STAGES.flatMap(([, rules]) => Object.keys(rules));
+
+/** Deny by default; first rule that hits decides. `wait` means CI is unsettled, so nothing is judged yet. `candidate` still needs the model. */
 export function evaluate(
 	snapshot: Snapshot,
 	config: Config,
 	requiredChecks: string[],
 	ctx: Context,
 ): Decision {
-	for (const [outcome, rules] of [
-		["skip", SKIP],
-		["escalate", ESCALATE],
-	] as const) {
+	for (const [outcome, rules] of STAGES) {
 		for (const [rule, check] of Object.entries(rules)) {
 			const hits = check(snapshot, config, requiredChecks, ctx);
 			if (hits.length)

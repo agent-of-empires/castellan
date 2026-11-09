@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.3.2](https://github.com/agent-of-empires/castellan/compare/v0.3.1...v0.3.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **triage:** skip a project field without the needed option instead of aborting ([#90](https://github.com/agent-of-empires/castellan/issues/90)) ([863a4ef](https://github.com/agent-of-empires/castellan/commit/863a4efc547e91c0e9facb61f9c7f5e94dfbd826))
+
+## [0.3.1](https://github.com/agent-of-empires/castellan/compare/v0.3.0...v0.3.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **pipeline:** read policy and codeowners at the base branch ref ([#86](https://github.com/agent-of-empires/castellan/issues/86)) ([7a802c2](https://github.com/agent-of-empires/castellan/commit/7a802c298d31fe4dcb9bf31d790f35f382656241))
+* **triage:** accept extra keys in the model's reasons object ([#89](https://github.com/agent-of-empires/castellan/issues/89)) ([77ed77b](https://github.com/agent-of-empires/castellan/commit/77ed77b011bfcf7c3101a08f051ce909e041c54c))
+
+## [0.3.0](https://github.com/agent-of-empires/castellan/compare/v0.2.1...v0.3.0) (2026-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** add triage.enabled and drop the triage shadow mode ([#83](https://github.com/agent-of-empires/castellan/issues/83))
+
+### Features
+
+* **config:** add triage.enabled and drop the triage shadow mode ([#83](https://github.com/agent-of-empires/castellan/issues/83)) ([1b44038](https://github.com/agent-of-empires/castellan/commit/1b44038e14a9ea695d98893275257e4648bae398))
+
+
+### Bug Fixes
+
+* **lambda:** route issues.labeled so triage runs on needs-triage ([#81](https://github.com/agent-of-empires/castellan/issues/81)) ([68a9889](https://github.com/agent-of-empires/castellan/commit/68a98896b5125e8b341701b3f6c0dea23e997c3d))
+* **llm:** add sonnet 4.6 and haiku 4.5 to the price table ([#80](https://github.com/agent-of-empires/castellan/issues/80)) ([a228c2c](https://github.com/agent-of-empires/castellan/commit/a228c2cd830fd93ff55a8c8ad997614401f50a92))
+
+## [0.2.1](https://github.com/agent-of-empires/castellan/compare/v0.2.0...v0.2.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **pipeline:** log the failure detail when a model call fails ([#75](https://github.com/agent-of-empires/castellan/issues/75)) ([36eeb0f](https://github.com/agent-of-empires/castellan/commit/36eeb0f59c920e3f23a1ba0ca0850e2a67fcdfbc))
+* **rules:** wait for CI to settle before posting a brief ([#72](https://github.com/agent-of-empires/castellan/issues/72)) ([127362e](https://github.com/agent-of-empires/castellan/commit/127362ed69eb6f99ca44a5ff390db5bd7d7cde6e))
+* **snapshot:** handle github 406 diff too_large instead of crashing ([#76](https://github.com/agent-of-empires/castellan/issues/76)) ([516fce6](https://github.com/agent-of-empires/castellan/commit/516fce605b915b3d02b0dfbb3553537258a66b90))
+
+## [0.2.0](https://github.com/agent-of-empires/castellan/compare/v0.1.1...v0.2.0) (2026-11-09)
+
+
+### Features
+
+* **brief:** readable comment, model in shadow, shadow status ([#69](https://github.com/agent-of-empires/castellan/issues/69)) ([1568997](https://github.com/agent-of-empires/castellan/commit/1568997f17a0dc80c0606ba0cf4a7e5a50e3af85))
+
+
+### Bug Fixes
+
+* **rules:** treat skipped required checks as satisfied ([#68](https://github.com/agent-of-empires/castellan/issues/68)) ([35103ce](https://github.com/agent-of-empires/castellan/commit/35103ce7e1dcc654d0fbc0e2a42151633a7102c5))
+
+## [0.1.1](https://github.com/agent-of-empires/castellan/compare/v0.1.0...v0.1.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **lambda:** filter check_suite and sha PR lookups to this repo ([#62](https://github.com/agent-of-empires/castellan/issues/62)) ([0783f8b](https://github.com/agent-of-empires/castellan/commit/0783f8b191a5289def1e852ddab1983174e9c9ad))
+* **pipeline:** fail closed on team lookup and snapshot errors ([#59](https://github.com/agent-of-empires/castellan/issues/59)) ([bc5aa38](https://github.com/agent-of-empires/castellan/commit/bc5aa3875d2b92f91226e1a36b430f25588d6e8d))
+
 ## 0.1.0 (2026-11-09)
 
 

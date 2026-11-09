@@ -15,6 +15,9 @@ interface World {
 	draft?: boolean;
 	state?: string;
 	issue?: object;
+	checks?: { name: string; conclusion: string | null }[];
+	required?: string[];
+	mergeable?: boolean | null;
 }
 
 function world({
@@ -22,6 +25,9 @@ function world({
 	draft = false,
 	state = "open",
 	issue,
+	checks = [{ name: "test", conclusion: "success" }],
+	required = [],
+	mergeable = true,
 }: World = {}) {
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
@@ -43,6 +49,7 @@ function world({
 						state,
 						merged: false,
 						draft,
+						mergeable,
 						node_id: "PR_1",
 						auto_merge: null,
 						base: { ref: "main", sha: "base1" },
@@ -75,7 +82,17 @@ function world({
 			];
 		}
 		if (route.endsWith("/check-runs")) {
-			return [{ name: "test", conclusion: "success" }];
+			return checks;
+		}
+		if (route.endsWith("/rules/branches/{branch}")) {
+			return [
+				{
+					type: "required_status_checks",
+					parameters: {
+						required_status_checks: required.map((context) => ({ context })),
+					},
+				},
+			];
 		}
 		return [];
 	});
@@ -114,12 +131,21 @@ describe("evaluatePull", () => {
 		expect(w.graphql).toHaveBeenCalledTimes(1);
 	});
 
-	it("reads config from the base sha", async () => {
+	it("reads config at the base branch ref, not the stale base sha", async () => {
 		const w = world();
 		await evaluatePull(w.env, repo, 3);
 		expect(w.request).toHaveBeenCalledWith(
 			"GET /repos/{owner}/{repo}/contents/{path}",
-			expect.objectContaining({ path: ".castellan.yml", ref: "base1" }),
+			expect.objectContaining({ path: ".castellan.yml", ref: "main" }),
+		);
+	});
+
+	it("reads CODEOWNERS at the base branch ref", async () => {
+		const w = world({ yaml: "teams: { protected: core }" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.request).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/contents/{path}",
+			expect.objectContaining({ path: ".github/CODEOWNERS", ref: "main" }),
 		);
 	});
 
@@ -152,6 +178,80 @@ describe("evaluatePull", () => {
 		expect(w.routes()).not.toContain(APPROVE);
 	});
 
+	it("runs the model on a rule escalation in shadow, as advice only", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledOnce();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("**Verdict: escalate** (shadow)");
+		expect(body).toContain("advisory, rules decided the verdict");
+		expect(
+			w.request.mock.calls.find((c) => c[0] === STATUS)?.[1],
+		).toMatchObject({ state: "success" });
+	});
+
+	it("keeps the rule verdict and a shadow status when the model call fails", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockRejectedValue(new Error("down"));
+		const r = await evaluatePull(w.env, repo, 3);
+		const reasons = r.brief?.outcome.reasons ?? [];
+		expect(reasons.length).toBeGreaterThan(0);
+		expect(reasons.some((x) => x.rule.startsWith("llm_"))).toBe(false);
+		expect(r.brief?.reviewError).toBe("sdk_error");
+		expect(
+			w.request.mock.calls.find((c) => c[0] === STATUS)?.[1],
+		).toMatchObject({
+			state: "success",
+			description: expect.stringMatching(/^shadow: would escalate \(.+\)$/),
+		});
+	});
+
+	it("logs the failure detail when the model call fails", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockRejectedValue(new Error("AccessDeniedException: no access"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(warn).toHaveBeenCalledWith("model review failed", {
+			error: "sdk_error",
+			detail: expect.stringContaining("AccessDeniedException"),
+		});
+		warn.mockRestore();
+	});
+
+	it("leaves the reasons unchanged when the model vetoes a rule escalation in shadow", async () => {
+		const base = world({ yaml: "mode: shadow" });
+		const expected = (await evaluatePull(base.env, repo, 3)).brief?.outcome
+			.reasons;
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: false,
+						new_behavior: true,
+						reasons: [{ severity: "blocker", text: "bad" }],
+					}),
+				},
+			],
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.reasons).toEqual(expected);
+		expect(r.brief?.review?.verdict.intent_match).toBe(false);
+	});
+
+	it("does not run the model on a rule escalation in enforce", async () => {
+		const w = world({ yaml: "mode: enforce" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Model: not run (rules decided)");
+	});
+
 	it("fails closed when the model is unavailable", async () => {
 		const w = world();
 		w.create.mockRejectedValue(new Error("down"));
@@ -170,6 +270,40 @@ describe("mode override", () => {
 		const enforce = world({ yaml: "mode: shadow\ntrustedAuthors: [alice]" });
 		await evaluatePull({ ...enforce.env, mode: "enforce" }, repo, 3);
 		expect(enforce.routes()).toContain(APPROVE);
+	});
+
+	it("Env.mode off overrides triage.enabled true", async () => {
+		const w = world({ yaml: "mode: shadow\ntriage: { enabled: true }" });
+		expect(await triageIssue({ ...w.env, mode: "off" }, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+	});
+
+	it("triage.enabled false skips triage while PRs are still evaluated", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { enabled: false }\ntrustedAuthors: [alice]",
+		});
+		expect(await triageIssue(w.env, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes()).toContain(COMMENT);
+	});
+
+	it("keeps the PR gate in shadow while triage is enabled", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { enabled: true }\ntrustedAuthors: [alice]",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes()).toContain(COMMENT);
+		expect(w.routes()).not.toContain(APPROVE);
+		const statuses = w.request.mock.calls.filter(([r]) => r === STATUS);
+		expect(statuses.length).toBeGreaterThan(0);
+		for (const [, p] of statuses) {
+			expect((p as { description: string }).description).toMatch(/^shadow:/);
+		}
 	});
 
 	it("also applies to the fallback config of an invalid file", async () => {
@@ -191,6 +325,71 @@ describe("mode off", () => {
 			"GET /orgs/{org}/teams/{team_slug}/memberships/{username}",
 		);
 		expect(w.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("waiting for CI", () => {
+	const statusBody = (w: ReturnType<typeof world>) =>
+		w.request.mock.calls.find((c) => c[0] === STATUS)?.[1];
+	const writes = (w: ReturnType<typeof world>) =>
+		w.routes().filter((r) => r.startsWith("POST") && r !== STATUS);
+
+	it("posts only a pending status when no check run exists yet", async () => {
+		const w = world({ checks: [], required: ["test"] });
+		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "waiting" });
+		expect(w.create).not.toHaveBeenCalled();
+		expect(writes(w)).toEqual([]);
+		expect(w.routes()).not.toContain(
+			"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
+		);
+		expect(statusBody(w)).toMatchObject({
+			sha: "head1",
+			state: "pending",
+			description: "castellan: waiting for CI",
+		});
+	});
+
+	it("waits on a queued optional check, with a shadow description in shadow", async () => {
+		const w = world({
+			yaml: "mode: shadow",
+			checks: [
+				{ name: "test", conclusion: "success" },
+				{ name: "docs", conclusion: null },
+			],
+		});
+		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "waiting" });
+		expect(statusBody(w)).toMatchObject({
+			state: "pending",
+			description: "shadow: waiting for CI",
+		});
+	});
+
+	it("writes nothing in a dry run", async () => {
+		const w = world({ checks: [], required: ["test"] });
+		expect(await evaluatePull(w.env, repo, 3, { dryRun: true })).toEqual({
+			status: "waiting",
+		});
+		expect(w.routes()).not.toContain(STATUS);
+	});
+
+	it("escalates a merge conflict instead of waiting", async () => {
+		const w = world({ checks: [], required: ["test"], mergeable: false });
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.status).toBe("acted");
+		expect(r.brief?.outcome.reasons.map((x) => x.rule)).toEqual([
+			"merge_conflict",
+		]);
+	});
+
+	it("escalates a settled PR with a failed required check", async () => {
+		const w = world({
+			checks: [{ name: "test", conclusion: "failure" }],
+			required: ["test"],
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.reasons).toEqual([
+			{ rule: "required_check", text: "required check test did not pass" },
+		]);
 	});
 });
 

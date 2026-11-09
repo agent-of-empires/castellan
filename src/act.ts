@@ -67,7 +67,14 @@ export async function act(
 			renderComment(b),
 			author,
 		);
-		await setStatus(transport, repoRef, headSha, b.outcome.verdict, html_url);
+		await setStatus(
+			transport,
+			repoRef,
+			headSha,
+			b.outcome,
+			config.mode,
+			html_url,
+		);
 	};
 
 	// Refuse in code even if the rules let a protected change through.

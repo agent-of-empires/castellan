@@ -10,7 +10,12 @@ import {
 import { type LlmDeps, promptHash, review } from "./llm.js";
 import { type CodeownersRule, type Context, evaluate } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
-import { findStickyComment, STATUS_CONTEXT, statusFor } from "./status.js";
+import {
+	findStickyComment,
+	STATUS_CONTEXT,
+	statusFor,
+	waitingStatus,
+} from "./status.js";
 import { type TriageResult, triage } from "./triage.js";
 import { decide } from "./verdict.js";
 
@@ -87,7 +92,7 @@ const getIssue = (env: Env, { owner, repo }: Repo, issue_number: number) =>
 		.catch(() => null);
 
 export interface PullResult {
-	status: "closed" | "skipped" | "acted" | "dry_run";
+	status: "closed" | "skipped" | "waiting" | "acted" | "dry_run";
 	brief?: Brief;
 	act?: ActResult;
 }
@@ -96,7 +101,7 @@ export interface PullResult {
  * Runs the full pipeline for one PR: snapshot, rules, model, verdict, act.
  * With `dryRun` nothing is written (no comment, status, approval or merge) and
  * the brief is returned. Once the head is known (team lookup and snapshot included), a failure sets the status to
- * pending (escalated) so a stale `success` cannot stay, then rethrows.
+ * pending (success in shadow) so a stale `success` cannot stay, then rethrows.
  */
 export async function evaluatePull(
 	env: Env,
@@ -115,7 +120,7 @@ export async function evaluatePull(
 	const { config, defaultBranch, error } = await repoConfig(
 		env,
 		repoRef,
-		pr.base.sha,
+		pr.base.ref,
 	);
 	if (!error && config.mode === "off") return { status: "skipped" };
 
@@ -131,7 +136,7 @@ export async function evaluatePull(
 		let codeowners: CodeownersRule[] = [];
 		if (config.teams.protected) {
 			for (const path of CODEOWNERS_PATHS) {
-				const text = await read(snapshot.baseSha, path);
+				const text = await read(pr.base.ref, path);
 				if (text !== null) {
 					codeowners = parseCodeowners(text);
 					break;
@@ -163,6 +168,19 @@ export async function evaluatePull(
 			};
 		}
 
+		if (decision.outcome === "wait") {
+			if (!opts.dryRun) {
+				await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
+					owner,
+					repo,
+					sha: snapshot.headSha,
+					context: STATUS_CONTEXT,
+					...waitingStatus(config.mode),
+				});
+			}
+			return { status: "waiting" };
+		}
+
 		const sticky = await findStickyComment(transport, repoRef, pullNumber, {
 			login,
 		});
@@ -174,11 +192,14 @@ export async function evaluatePull(
 		const dedup = await getOrRun({
 			cached: sticky ? parseBlock(sticky.body) : null,
 			key,
-			ruleEscalated: decision.outcome === "escalate",
+			// Shadow also runs the model on rule escalations, as advice only.
+			skipModel:
+				decision.outcome === "escalate" &&
+				(config.mode !== "shadow" || !!error),
 			run: async () => {
 				const linked = snapshot.linkedIssues[0];
 				const issue = linked ? await getIssue(env, repoRef, linked) : null;
-				return review(
+				const result = await review(
 					{
 						title: snapshot.title,
 						body: snapshot.body,
@@ -188,6 +209,12 @@ export async function evaluatePull(
 					config,
 					env.llm,
 				);
+				if (!result.ok)
+					console.warn("model review failed", {
+						error: result.error,
+						detail: result.detail?.slice(0, 500),
+					});
+				return result;
 			},
 		});
 		const result = dedup.source === "skipped" ? undefined : dedup.result;
@@ -198,7 +225,9 @@ export async function evaluatePull(
 			key,
 			checks: snapshot.checks,
 			review: result?.ok ? result : undefined,
+			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
+			shadow: config.mode === "shadow",
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {
@@ -221,8 +250,8 @@ export async function evaluatePull(
 				repo,
 				sha: pr.head.sha,
 				context: STATUS_CONTEXT,
-				...statusFor("escalate"),
-				description: "castellan: internal error",
+				...statusFor("escalate", config.mode),
+				description: `${config.mode === "shadow" ? "shadow" : "castellan"}: internal error`,
 			})
 			.catch((e) => console.error("fail-closed status failed", e));
 		throw err;
@@ -246,7 +275,7 @@ export async function triageIssue(
 		env.transport,
 		repoRef,
 		env.llm,
-		opts,
+		{ ...opts, login: env.login },
 	);
 }
 
