@@ -186,6 +186,7 @@ describe("mode off", () => {
 		const w = world({ yaml: "mode: off\nteams:\n  maintainers: m" });
 		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "skipped" });
 		expect(w.paginate).not.toHaveBeenCalled();
+		expect(w.routes()).not.toContain(STATUS);
 		expect(w.routes()).not.toContain(
 			"GET /orgs/{org}/teams/{team_slug}/memberships/{username}",
 		);
@@ -212,6 +213,25 @@ describe("fail closed", () => {
 			}),
 		);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("sets a pending status and rethrows when the team lookup throws", async () => {
+		const w = world({ yaml: "mode: enforce\nteams:\n  maintainers: m" });
+		const base = w.request.getMockImplementation();
+		w.request.mockImplementation(async (route, params) => {
+			if (route.includes("/teams/")) throw new Error("teams down");
+			return (base ? base(route, params) : { data: {} }) as never;
+		});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("teams down");
+		expect(w.request).toHaveBeenCalledWith(
+			STATUS,
+			expect.objectContaining({
+				sha: "head1",
+				state: "pending",
+				description: "castellan: internal error",
+			}),
+		);
+		expect(w.routes()).not.toContain(COMMENT);
 	});
 
 	it("also covers an act failure", async () => {
