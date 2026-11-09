@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/agent-of-empires/castellan/compare/v0.3.1...v0.3.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **triage:** skip a project field without the needed option instead of aborting ([#90](https://github.com/agent-of-empires/castellan/issues/90)) ([863a4ef](https://github.com/agent-of-empires/castellan/commit/863a4efc547e91c0e9facb61f9c7f5e94dfbd826))
+
 ## [0.3.1](https://github.com/agent-of-empires/castellan/compare/v0.3.0...v0.3.1) (2026-11-09)
 
 
