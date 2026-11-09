@@ -57,25 +57,16 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 		});
 	});
 
-	it.each(["shadow", "enforce", "off"])(
-		"triage.mode defaults to mode %s",
-		async (mode) => {
-			const r = await loadConfig("main", reader(`mode: ${mode}`));
-			expect(r).toMatchObject({
-				ok: true,
-				config: { mode, triage: { mode } },
-			});
-		},
-	);
-
-	it("keeps an explicit triage.mode apart from mode", async () => {
-		const r = await loadConfig(
-			"main",
-			reader("mode: shadow\ntriage: { mode: enforce }"),
-		);
-		expect(r).toMatchObject({
+	it("triage is enabled by default and can be disabled", async () => {
+		const on = await loadConfig("main", reader("mode: shadow"));
+		expect(on).toMatchObject({
 			ok: true,
-			config: { mode: "shadow", triage: { mode: "enforce" } },
+			config: { triage: { enabled: true } },
+		});
+		const off = await loadConfig("main", reader("triage: { enabled: false }"));
+		expect(off).toMatchObject({
+			ok: true,
+			config: { triage: { enabled: false } },
 		});
 	});
 
@@ -88,6 +79,8 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 		["bad enum", "mode: yolo"],
 		["bad type", "limits: { maxLines: lots }"],
 		["unknown key", "mod: off"],
+		["unknown triage key", "triage: { mode: shadow }"],
+		["bad triage.enabled", "triage: { enabled: maybe }"],
 		["priority without a status", "triage: { priority_labels: [P0, P9] }"],
 		["not a mapping", "- a\n- b"],
 		["bad yaml", "a: [unclosed"],

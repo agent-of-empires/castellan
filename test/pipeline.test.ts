@@ -263,94 +263,29 @@ describe("mode override", () => {
 		expect(enforce.routes()).toContain(APPROVE);
 	});
 
-	it("also overrides triage.mode", async () => {
-		const w = world({ yaml: "mode: shadow\ntriage: { mode: enforce }" });
+	it("Env.mode off overrides triage.enabled true", async () => {
+		const w = world({ yaml: "mode: shadow\ntriage: { enabled: true }" });
 		expect(await triageIssue({ ...w.env, mode: "off" }, repo, 5)).toEqual({
 			ok: true,
 			skipped: "off",
 		});
 	});
 
-	it("env shadow keeps triage.mode enforce from writing", async () => {
-		const w = world({ yaml: "mode: shadow\ntriage: { mode: enforce }" });
-		const field = (id: string, name: string, options: string[]) => ({
-			id,
-			name,
-			options: options.map((o) => ({ id: `${id}:${o}`, name: o })),
+	it("triage.enabled false skips triage while PRs are still evaluated", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { enabled: false }\ntrustedAuthors: [alice]",
 		});
-		w.graphql.mockImplementation((async (q: string) => {
-			if (q.includes("pageInfo")) {
-				return {
-					repository: {
-						labels: {
-							nodes: ["P1", "area:core", "bug"].map((name) => ({ name })),
-							pageInfo: { hasNextPage: false, endCursor: null },
-						},
-					},
-				};
-			}
-			return {
-				repository: {
-					issue: {
-						id: "ISSUE",
-						labels: { nodes: [{ name: "needs-triage" }] },
-						projectItems: { nodes: [] },
-					},
-				},
-				organization: {
-					projectsV2: {
-						nodes: [
-							{
-								id: "PRJ",
-								title: "Agent of Empires",
-								fields: {
-									nodes: [
-										field("fs", "Status", ["Ready", "Backlog"]),
-										field("fp", "Priority", ["P0", "P1", "P2", "P3"]),
-										field("fz", "Size", ["XS", "S", "M", "L", "XL"]),
-									],
-								},
-							},
-						],
-					},
-				},
-			};
-		}) as never);
-		w.create.mockResolvedValue({
-			content: [
-				{
-					type: "text",
-					text: JSON.stringify({
-						priority: "P1",
-						area: "area:core",
-						type: "bug",
-						size: "M",
-						readyForAgent: { suggest: false, reason: "r" },
-						reasons: { priority: "p", area: "a", type: "t", size: "s" },
-					}),
-				},
-			],
-			usage: { input_tokens: 1, output_tokens: 1 },
-		} as never);
-		const r = await triageIssue({ ...w.env, mode: "shadow" }, repo, 5);
-		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		expect(await triageIssue(w.env, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).toContain(COMMENT);
-		expect(w.routes()).not.toContain(
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
-		);
-		expect(w.routes()).not.toContain(
-			"DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}",
-		);
-		expect(
-			(w.graphql.mock.calls as unknown[][]).some(([q]) =>
-				String(q).includes("updateProjectV2ItemFieldValue"),
-			),
-		).toBe(false);
 	});
 
-	it("leaves the PR gate on mode when triage.mode differs", async () => {
+	it("keeps the PR gate in shadow while triage is enabled", async () => {
 		const w = world({
-			yaml: "mode: shadow\ntriage: { mode: enforce }\ntrustedAuthors: [alice]",
+			yaml: "mode: shadow\ntriage: { enabled: true }\ntrustedAuthors: [alice]",
 		});
 		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).toContain(COMMENT);
