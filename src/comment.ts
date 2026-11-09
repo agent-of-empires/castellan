@@ -3,7 +3,7 @@
  * hidden state block is always last, and the whole body stays under BODY_LIMIT.
  */
 import { type CacheKey, serializeBlock } from "./cache.js";
-import type { OkReviewResult } from "./llm.js";
+import type { FailureReason, OkReviewResult } from "./llm.js";
 import type { Snapshot } from "./snapshot.js";
 import type { Outcome } from "./verdict.js";
 
@@ -22,6 +22,8 @@ export interface Brief {
 	checks: Snapshot["checks"];
 	/** Absent when the model did not run or failed. */
 	review?: OkReviewResult;
+	/** Why the model call failed, when it did. */
+	reviewError?: FailureReason;
 	/** `cache` means `review.costUsd` was paid by an earlier run. */
 	source: "cache" | "llm" | "skipped";
 	/** Marks the verdict line as shadow. */
@@ -55,11 +57,11 @@ const rulesDecided = ({ outcome }: Brief) =>
 	!outcome.reasons.every((r) => r.rule.startsWith("llm_"));
 
 function modelIntro(brief: Brief): string[] {
-	const { review, source } = brief;
+	const { review, source, reviewError } = brief;
 	if (!review) {
 		return [
 			source === "llm"
-				? "Model: unavailable"
+				? `Model: unavailable${reviewError ? ` (${reviewError})` : ""}`
 				: "Model: not run (rules decided)",
 		];
 	}
@@ -87,8 +89,13 @@ const rank = (conclusion: string) =>
 
 function checksSection({ checks }: Brief): string[] {
 	if (!checks.length) return ["Checks: none on the head commit."];
-	// A later run of the same check replaces the earlier one.
-	const latest = [...new Map(checks.map((c) => [c.name, c])).values()];
+	// The newest run (highest id) of a check replaces older ones.
+	const byName = new Map<string, Snapshot["checks"][number]>();
+	for (const c of checks) {
+		const prev = byName.get(c.name);
+		if (!prev || (c.id ?? 0) >= (prev.id ?? 0)) byName.set(c.name, c);
+	}
+	const latest = [...byName.values()];
 	const count = (r: number) =>
 		latest.filter((c) => rank(c.conclusion) === r).length;
 	const pending = count(1);

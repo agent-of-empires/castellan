@@ -201,6 +201,7 @@ export async function evaluatePull(
 			key,
 			checks: snapshot.checks,
 			review: result?.ok ? result : undefined,
+			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
 			shadow: config.mode === "shadow",
 		};

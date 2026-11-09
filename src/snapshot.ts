@@ -31,7 +31,8 @@ export interface Snapshot {
 	diff: string;
 	diffTruncated: boolean;
 	/** Every check run on the head SHA, not only required ones. */
-	checks: { name: string; conclusion: string }[];
+	/** `id` orders runs of one check; the API returns newest first. */
+	checks: { id?: number; name: string; conclusion: string }[];
 	/** State and commit only; review bodies are human text and are left out. */
 	reviews: { login: string; state: string; commitId: string }[];
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
@@ -126,6 +127,7 @@ export async function buildSnapshot(
 		diff: diffText.text,
 		diffTruncated: diffText.truncated,
 		checks: checks.map((c) => ({
+			id: c.id,
 			name: c.name,
 			conclusion: c.conclusion ?? "pending",
 		})),

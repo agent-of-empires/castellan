@@ -141,16 +141,17 @@ describe("renderComment", () => {
 		expect(out).toContain("| e2e \\| slow | skipped |");
 	});
 
-	it("collapses the checks, failed and skipped first, one row per name", () => {
+	it("collapses the checks, failed and skipped first, newest run per name", () => {
 		const out = renderComment({
 			...brief,
 			checks: [
-				{ name: "lint", conclusion: "success" },
-				{ name: "build", conclusion: "failure" },
-				{ name: "e2e", conclusion: "skipped" },
-				{ name: "build", conclusion: "success" },
-				{ name: "test", conclusion: "failure" },
-				{ name: "docs", conclusion: "pending" },
+				// The API lists newest first, so ids, not order, decide.
+				{ id: 6, name: "lint", conclusion: "success" },
+				{ id: 5, name: "build", conclusion: "success" },
+				{ id: 4, name: "e2e", conclusion: "skipped" },
+				{ id: 3, name: "build", conclusion: "failure" },
+				{ id: 2, name: "test", conclusion: "failure" },
+				{ id: 1, name: "docs", conclusion: "pending" },
 			],
 		});
 		expect(out).toContain(
@@ -187,8 +188,13 @@ describe("renderComment", () => {
 	});
 
 	it("reports a failed model call", () => {
-		const out = renderComment({ ...brief, review: undefined, source: "llm" });
-		expect(out).toContain("Model: unavailable");
+		const out = renderComment({
+			...brief,
+			review: undefined,
+			reviewError: "timeout",
+			source: "llm",
+		});
+		expect(out).toContain("Model: unavailable (timeout)");
 		expect(out).toContain("- Model run: fresh, failed");
 	});
 
@@ -324,7 +330,7 @@ describe("real briefs", () => {
 		expect(out).toContain("- Model run: cached from `abcdef1`");
 	});
 
-	it("missing required check, rerun replaces the skipped row", () => {
+	it("missing required check, the newest run replaces an older one", () => {
 		const out = renderComment({
 			outcome: {
 				verdict: "escalate",
@@ -338,9 +344,9 @@ describe("real briefs", () => {
 			key,
 			checks: [
 				...green,
-				{ name: "Cargo Test (macos)", conclusion: "skipped" },
-				{ name: "close-stale", conclusion: "skipped" },
-				{ name: "Cargo Test (macos)", conclusion: "skipped" },
+				{ id: 30, name: "Cargo Test (macos)", conclusion: "skipped" },
+				{ id: 20, name: "close-stale", conclusion: "skipped" },
+				{ id: 10, name: "Cargo Test (macos)", conclusion: "cancelled" },
 			],
 			review: undefined,
 			source: "skipped",
