@@ -163,12 +163,10 @@ const ESCALATE: Record<string, Rule> = {
 		required
 			.filter(
 				(name) =>
-					!s.checks.some(
-						(k) => k.name === name && PASSING.includes(k.conclusion),
-					),
+					!s.checks.some((k) => k.name === name && OK.includes(k.conclusion)),
 			)
 			.map((name) => ({
-				text: `required check ${name} is missing or skipped`,
+				text: `required check ${name} is missing or did not pass`,
 			})),
 	coderabbit: (s) =>
 		when(s.codeRabbit === "CHANGES_REQUESTED", "CodeRabbit requested changes"),

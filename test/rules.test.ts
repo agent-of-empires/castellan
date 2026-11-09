@@ -147,9 +147,6 @@ describe("escalate rules", () => {
 		escalates("check_pending", { checks: [{ name: "ci", conclusion }] });
 	}
 	escalates("required_check", { checks: [] });
-	escalates("required_check", {
-		checks: [{ name: "ci", conclusion: "skipped" }],
-	});
 	escalates("coderabbit", { codeRabbit: "CHANGES_REQUESTED" });
 	escalates("max_lines", { files: [file("src/a.ts", 60, 41)] });
 	escalates("max_files", {
@@ -223,6 +220,30 @@ describe("rule details", () => {
 			{ name: "b", conclusion: "neutral" },
 		];
 		expect(run(snap({ checks })).outcome).toBe("candidate");
+	});
+
+	it.each([
+		"failure",
+		"cancelled",
+		"timed_out",
+		"action_required",
+		"stale",
+		"pending",
+	])("required check concluding %s escalates", (conclusion) => {
+		const d = run(snap({ checks: [{ name: "ci", conclusion }] }));
+		expect(d.outcome).toBe("escalate");
+	});
+
+	it("treats a skipped required check as satisfied, like GitHub", () => {
+		const checks = [
+			{ name: "Cargo Test (macos)", conclusion: "skipped" },
+			{ name: "macOS gate", conclusion: "success" },
+		];
+		const d = run(snap({ checks }), config, [
+			"Cargo Test (macos)",
+			"macOS gate",
+		]);
+		expect(d.outcome).toBe("candidate");
 	});
 
 	it("a later approval clears human changes requested", () => {
