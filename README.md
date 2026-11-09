@@ -56,6 +56,10 @@ pnpm build   # dist/lambda/index.mjs
 
 Infra (Lambda, role, budget) lives in [agent-of-empires/infra](https://github.com/agent-of-empires/infra) (`aws/castellan.tf`). To ship a release, run the `Deploy` workflow (Actions, Run workflow) with the release tag. It downloads `castellan-lambda-<version>.zip`, verifies its checksum and updates the function code. Rollback is rerunning it with an older tag. The workflow only works from `main`.
 
+## Website
+
+`website/` is an Astro site for https://castellan.agent-of-empires.com. The `Website` workflow builds it on PRs and deploys it to GitHub Pages on push to `main`. Run it locally with `cd website && npm ci && npm run dev`.
+
 See [AGENTS.md](AGENTS.md) for contribution conventions.
 
 ## License
