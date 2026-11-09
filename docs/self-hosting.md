@@ -71,6 +71,8 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
 
+A PR whose CI has not settled (a required check has no run yet, or a run is queued or in progress) gets no comment and a `pending` `castellan` status reading "waiting for CI". The `check_suite` and `status` events and the sweep re-evaluate it, so nothing else is needed to resume.
+
 Responses: 401 bad signature; 400 signed body that is not JSON; 200 for ignored events, repos not in `CASTELLAN_REPOS`, and per-PR failures (logged); 500 only for infrastructure failures (secrets, GitHub connection). If anything fails after the PR head is known, the `castellan` status is set to `pending` ("internal error"; `success` in `shadow`) so a stale verdict cannot stay. GitHub marks a delivery as timed out after 10 seconds; the Lambda keeps running and finishes the work, the delivery just shows as failed.
 
 ### Release, then Deploy

@@ -10,7 +10,7 @@ const DESCRIPTION_LIMIT = 140;
 
 /**
  * Never `failure`: an escalation waits for a human instead of blocking. Shadow is
- * always `success`, because `pending` reads as "waiting for status to be reported".
+ * `success` for a verdict, because `pending` reads as "waiting for status to be reported".
  */
 export function statusFor(
 	verdict: Outcome["verdict"],
@@ -34,6 +34,12 @@ export function statusFor(
 				description: "castellan: escalated to a human",
 			};
 }
+
+/** CI has not settled; always `pending`, also in shadow, so a stale verdict cannot stay. */
+export const waitingStatus = (mode: Config["mode"]) => ({
+	state: "pending" as const,
+	description: `${mode === "shadow" ? "shadow" : "castellan"}: waiting for CI`,
+});
 
 export async function setStatus(
 	transport: GithubTransport,

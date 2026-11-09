@@ -15,6 +15,9 @@ interface World {
 	draft?: boolean;
 	state?: string;
 	issue?: object;
+	checks?: { name: string; conclusion: string | null }[];
+	required?: string[];
+	mergeable?: boolean | null;
 }
 
 function world({
@@ -22,6 +25,9 @@ function world({
 	draft = false,
 	state = "open",
 	issue,
+	checks = [{ name: "test", conclusion: "success" }],
+	required = [],
+	mergeable = true,
 }: World = {}) {
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
@@ -43,6 +49,7 @@ function world({
 						state,
 						merged: false,
 						draft,
+						mergeable,
 						node_id: "PR_1",
 						auto_merge: null,
 						base: { ref: "main", sha: "base1" },
@@ -75,7 +82,17 @@ function world({
 			];
 		}
 		if (route.endsWith("/check-runs")) {
-			return [{ name: "test", conclusion: "success" }];
+			return checks;
+		}
+		if (route.endsWith("/rules/branches/{branch}")) {
+			return [
+				{
+					type: "required_status_checks",
+					parameters: {
+						required_status_checks: required.map((context) => ({ context })),
+					},
+				},
+			];
 		}
 		return [];
 	});
@@ -265,6 +282,71 @@ describe("mode off", () => {
 			"GET /orgs/{org}/teams/{team_slug}/memberships/{username}",
 		);
 		expect(w.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("waiting for CI", () => {
+	const statusBody = (w: ReturnType<typeof world>) =>
+		w.request.mock.calls.find((c) => c[0] === STATUS)?.[1];
+	const writes = (w: ReturnType<typeof world>) =>
+		w.routes().filter((r) => r.startsWith("POST") && r !== STATUS);
+
+	it("posts only a pending status when no check run exists yet", async () => {
+		const w = world({ checks: [], required: ["test"] });
+		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "waiting" });
+		expect(w.create).not.toHaveBeenCalled();
+		expect(writes(w)).toEqual([]);
+		expect(w.routes()).not.toContain(
+			"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
+		);
+		expect(statusBody(w)).toMatchObject({
+			sha: "head1",
+			state: "pending",
+			description: "castellan: waiting for CI",
+		});
+	});
+
+	it("waits on a queued optional check, with a shadow description in shadow", async () => {
+		const w = world({
+			yaml: "mode: shadow",
+			checks: [
+				{ name: "test", conclusion: "success" },
+				{ name: "docs", conclusion: null },
+			],
+		});
+		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "waiting" });
+		expect(statusBody(w)).toMatchObject({
+			state: "pending",
+			description: "shadow: waiting for CI",
+		});
+	});
+
+	it("writes nothing in a dry run", async () => {
+		const w = world({ checks: [], required: ["test"] });
+		expect(await evaluatePull(w.env, repo, 3, { dryRun: true })).toEqual({
+			status: "waiting",
+		});
+		expect(w.routes()).not.toContain(STATUS);
+	});
+
+	it("escalates a merge conflict instead of waiting", async () => {
+		const w = world({ checks: [], required: ["test"], mergeable: false });
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.status).toBe("acted");
+		expect(r.brief?.outcome.reasons.map((x) => x.rule)).toEqual([
+			"merge_conflict",
+		]);
+	});
+
+	it("escalates a settled PR with a failed required check", async () => {
+		const w = world({
+			checks: [{ name: "test", conclusion: "failure" }],
+			required: ["test"],
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.reasons).toEqual([
+			{ rule: "required_check", text: "required check test did not pass" },
+		]);
 	});
 });
 
