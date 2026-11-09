@@ -70,7 +70,13 @@ describe("action events", () => {
 		const m = llm(merge);
 		const items = await handleEvent(
 			"pull_request",
-			{ pull_request: { number: 3, head: { repo: { fork: false } } } },
+			{
+				pull_request: {
+					number: 3,
+					head: { repo: { full_name: "o/r" } },
+					base: { repo: { full_name: "o/r" } },
+				},
+			},
 			{ transport: f.transport, login, llm: m.deps },
 			repo,
 		);
@@ -80,16 +86,42 @@ describe("action events", () => {
 		expect(f.routes()).toContain(COMMENT);
 	});
 
-	it("does no work for a fork pull_request", async () => {
+	it.each([
+		["a fork", { full_name: "someone/r" }],
+		["a deleted fork", null],
+	])("does no work when the head is %s", async (_name, head) => {
 		const f = fake();
 		const items = await handleEvent(
 			"pull_request",
-			{ pull_request: { number: 3, head: { repo: { fork: true } } } },
+			{
+				pull_request: {
+					number: 3,
+					head: { repo: head },
+					base: { repo: { full_name: "o/r" } },
+				},
+			},
 			{ transport: f.transport, login },
 			repo,
 		);
 		expect(items).toEqual([]);
 		expect(f.request).not.toHaveBeenCalled();
+	});
+
+	it("still runs a PR in a repo that is itself a fork", async () => {
+		const f = fake();
+		const items = await handleEvent(
+			"pull_request",
+			{
+				pull_request: {
+					number: 3,
+					head: { repo: { full_name: "me/forked" } },
+					base: { repo: { full_name: "me/forked" } },
+				},
+			},
+			{ transport: f.transport, login, llm: llm(merge).deps },
+			{ owner: "me", repo: "forked" },
+		);
+		expect(items).toHaveLength(1);
 	});
 
 	it("routes issues and rejects unknown events", async () => {
@@ -178,16 +210,16 @@ describe("action env", () => {
 
 describe("auth", () => {
 	it("defaults a token to the workflow bot", async () => {
-		const a = await resolveAuth({ token: "t" });
+		const a = await resolveAuth({ token: "t" }, "x");
 		expect(a.login).toBe("github-actions[bot]");
 	});
 
-	it("rejects partial app credentials and no credentials, naming the env vars", async () => {
-		await expect(resolveAuth({ appId: "1", token: "t" })).rejects.toThrow(
+	it("rejects partial app credentials, and names the caller's settings when there are none", async () => {
+		await expect(resolveAuth({ appId: "1", token: "t" }, "x")).rejects.toThrow(
 			/app auth/,
 		);
-		await expect(resolveAuth({})).rejects.toThrow(
-			/GITHUB_TOKEN, or CASTELLAN_APP_ID/,
+		await expect(resolveAuth({}, "MY_VARS")).rejects.toThrow(
+			"no credentials: set MY_VARS",
 		);
 	});
 
@@ -242,7 +274,9 @@ describe("cli", () => {
 	});
 
 	it("fails without credentials after parsing", async () => {
-		await expect(cli(["o/r", "1"], {})).rejects.toThrow(/GITHUB_TOKEN/);
+		await expect(cli(["o/r", "1"], {})).rejects.toThrow(
+			/GITHUB_TOKEN, or CASTELLAN_APP_ID/,
+		);
 	});
 
 	it("--dry-run on a PR prints the brief and writes nothing, even with --mode enforce", async () => {

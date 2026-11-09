@@ -6,27 +6,12 @@ export const COMMENT =
 	"POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
 export const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 
-export interface World {
-	config?: string | null;
-	draft?: boolean;
-	files?: { filename: string; additions: number; deletions: number }[];
-	login?: string;
-}
-
-export function fake(w: World = {}) {
+export function fake() {
 	let sticky: string | null = null;
-	const files = w.files ?? [
-		{ filename: "src/a.ts", additions: 2, deletions: 1 },
-	];
+	const files = [{ filename: "src/a.ts", additions: 2, deletions: 1 }];
 	const request = vi.fn(
-		async (
-			route: string,
-			p: { path?: string; mediaType?: object; body?: string } = {},
-		) => {
+		async (route: string, p: { mediaType?: object; body?: string } = {}) => {
 			if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
-				if (p.path === ".castellan.yml" && w.config != null) {
-					return { data: w.config };
-				}
 				throw Object.assign(new Error("nf"), { status: 404 });
 			}
 			if (route === "GET /repos/{owner}/{repo}") {
@@ -38,12 +23,12 @@ export function fake(w: World = {}) {
 					data: {
 						state: "open",
 						merged: false,
-						draft: w.draft ?? false,
+						draft: false,
 						title: "fix: a",
 						body: "Closes #5",
 						node_id: "PR_1",
 						auto_merge: null,
-						user: { login: w.login ?? "alice", type: "User" },
+						user: { login: "alice", type: "User" },
 						base: { ref: "main", sha: "base1" },
 						head: { ref: "fix-a", sha: "head1" },
 					},
