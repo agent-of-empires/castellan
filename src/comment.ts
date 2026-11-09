@@ -1,12 +1,20 @@
+/**
+ * The sticky comment is a decision record: the verdict line stays at the top, the
+ * hidden state block is always last, and the whole body stays under BODY_LIMIT.
+ */
 import { type CacheKey, serializeBlock } from "./cache.js";
 import type { OkReviewResult } from "./llm.js";
 import type { Snapshot } from "./snapshot.js";
 import type { Outcome } from "./verdict.js";
 
 export const MAX_REASONS = 3;
+export const MAX_CHECKS = 50;
+export const MAX_REASON_CHARS = 500;
+/** GitHub rejects comment bodies of 65536 characters or more. */
+export const BODY_LIMIT = 65_000;
 
-// Built from a string so the source itself holds no dash characters.
-const DASHES = /[\u2013\u2014]/g;
+// Escapes, not literal characters, so the source itself holds no dashes (U+2012 to U+2015, U+2212).
+const DASHES = /[\u2012-\u2015\u2212]/g;
 
 export interface Brief {
 	outcome: Outcome;
@@ -23,6 +31,7 @@ export interface Brief {
 /** Makes untrusted text inert in a GitHub comment: no mentions, links, URLs, HTML or dashes. */
 export function escapeText(text: string): string {
 	return text
+		.replace(/&/g, "&amp;")
 		.replace(DASHES, "-")
 		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
 		.replace(/(?:https?:\/\/|www\.)\S+/gi, "[url removed]")
@@ -32,9 +41,10 @@ export function escapeText(text: string): string {
 		.trim();
 }
 
+const reason = (text: string) => escapeText(text.slice(0, MAX_REASON_CHARS));
 const cell = (text: string) => escapeText(text).replace(/\|/g, "\\|");
 const at = (path?: string) =>
-	path ? ` (\`${escapeText(path).replace(/`/g, "")}\`)` : "";
+	path ? ` (\`${reason(path).replace(/`/g, "")}\`)` : "";
 const yesNo = (b: boolean) => (b ? "yes" : "no");
 
 function conformance({ review }: Brief): string[] {
@@ -59,7 +69,12 @@ function evidence({ checks }: Brief): string[] {
 	return [
 		"| Check | Conclusion |",
 		"| --- | --- |",
-		...checks.map((c) => `| ${cell(c.name)} | ${cell(c.conclusion)} |`),
+		...checks
+			.slice(0, MAX_CHECKS)
+			.map((c) => `| ${cell(c.name)} | ${cell(c.conclusion)} |`),
+		...(checks.length > MAX_CHECKS
+			? ["", `+${checks.length - MAX_CHECKS} more checks`]
+			: []),
 	];
 }
 
@@ -73,21 +88,18 @@ function provenance({ key, review, source }: Brief): string[] {
 	];
 }
 
-/** The hidden state block is always the last thing in the body. */
 export function renderComment(brief: Brief): string {
 	const { outcome, key, review, ownerTeam } = brief;
 	const shown = outcome.reasons.slice(0, MAX_REASONS);
 	const more = outcome.reasons.length - shown.length;
-	const lines = [
+	const head = [
 		"## Castellan brief",
 		"",
 		`**Verdict: ${outcome.verdict}**${ownerTeam ? ` | Owner team: ${escapeText(ownerTeam)}` : ""}`,
 		"",
 		...(shown.length
 			? [
-					...shown.map(
-						(r, i) => `${i + 1}. ${escapeText(r.text)}${at(r.path)}`,
-					),
+					...shown.map((r, i) => `${i + 1}. ${reason(r.text)}${at(r.path)}`),
 					...(more > 0 ? [`(+${more} more)`] : []),
 					"",
 				]
@@ -96,7 +108,8 @@ export function renderComment(brief: Brief): string {
 		...conformance(brief),
 		"",
 		"### Correctness",
-		...correctness(brief),
+	];
+	const tail = [
 		"",
 		"### Evidence",
 		...evidence(brief),
@@ -106,9 +119,24 @@ export function renderComment(brief: Brief): string {
 		"",
 	];
 	const { promptHash: _h, ...llm } = review ?? {};
-	return `${lines.join("\n")}\n${serializeBlock({
+	const block = serializeBlock({
 		verdict: outcome.verdict,
 		...key,
 		...(review && { llm: llm as Omit<OkReviewResult, "promptHash"> }),
-	})}`;
+	});
+
+	// Last resort: drop findings so the block always survives intact and last.
+	const findings = correctness(brief);
+	const fixed = [...head, ...tail].join("\n").length + block.length + 2;
+	const kept: string[] = [];
+	let used = fixed + 80;
+	for (const line of findings) {
+		if (used + line.length + 1 > BODY_LIMIT) break;
+		kept.push(line);
+		used += line.length + 1;
+	}
+	if (kept.length < findings.length) {
+		kept.push(`(+${findings.length - kept.length} more findings omitted)`);
+	}
+	return `${[...head, ...kept, ...tail].join("\n")}\n${block}`;
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseBlock } from "../src/cache.js";
-import { type Brief, escapeText, renderComment } from "../src/comment.js";
+import {
+	BODY_LIMIT,
+	type Brief,
+	escapeText,
+	renderComment,
+} from "../src/comment.js";
 import type { OkReviewResult } from "../src/llm.js";
 
 const key = {
@@ -126,7 +131,60 @@ describe("renderComment", () => {
 	});
 });
 
+describe("size cap", () => {
+	const big: Brief = {
+		...brief,
+		checks: Array.from({ length: 1000 }, (_, i) => ({
+			name: `check-${i}`,
+			conclusion: "success",
+		})),
+		review: {
+			...review,
+			verdict: {
+				...review.verdict,
+				reasons: [
+					...Array.from({ length: 80 }, (_, i) => ({
+						severity: "nit" as const,
+						text: `nit ${i} ${"y".repeat(480)}`,
+					})),
+					{ severity: "concern", text: "x".repeat(8000) },
+				],
+			},
+		},
+	};
+
+	it("stays under the limit with the block intact and last", () => {
+		const out = renderComment(big);
+		expect(out.length).toBeLessThan(BODY_LIMIT);
+		expect(out).toContain("+950 more checks");
+		expect(out).toContain("| check-49 |");
+		expect(out).not.toContain("| check-50 |");
+		expect(out.split("<!-- castellan")[0]).not.toContain("x".repeat(501));
+		expect(out).toMatch(/more findings omitted/);
+		expect(out.trimEnd().split("\n").at(-1)).toMatch(
+			/^<!-- castellan \{.*\} -->$/,
+		);
+		expect(parseBlock(out)?.llm?.verdict.reasons).toHaveLength(81);
+	});
+
+	it("keeps the verdict line at the top", () => {
+		expect(renderComment(big).split("\n")[2]).toMatch(/^\*\*Verdict: /);
+	});
+});
+
 describe("escapeText", () => {
+	it("escapes ampersands so entities cannot render", () => {
+		const out = escapeText("&mdash; &#64;octocat &amp;");
+		expect(out).toBe("&amp;mdash; &amp;#64;octocat &amp;amp;");
+	});
+
+	it("normalizes every dash variant", () => {
+		const dashes = [0x2012, 0x2013, 0x2014, 0x2015, 0x2212]
+			.map((c) => String.fromCharCode(c))
+			.join("");
+		expect(escapeText(`a${dashes}b`)).toBe("a-----b");
+	});
+
 	it("strips mentions, links and raw URLs", () => {
 		const out = escapeText(
 			"ping @octocat and @org/team, see [docs](https://evil.test/x) or https://evil.test/y and www.evil.test",
