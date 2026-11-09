@@ -263,16 +263,31 @@ describe("routing", () => {
 		expect(pulls()).toEqual([]);
 	});
 
-	it("issues opened triages, other actions do not", async () => {
+	it("issues opened or labeled triages, other actions do not", async () => {
 		const { res } = await run("issues", {
 			action: "opened",
 			issue: { number: 11 },
 		});
 		await run("issues", { action: "labeled", issue: { number: 12 } });
+		await run("issues", { action: "closed", issue: { number: 13 } });
 		expect(res.statusCode).toBe(200);
 		expect(vi.mocked(triageIssue).mock.calls.map((c) => [c[1], c[2]])).toEqual([
 			[{ owner: "o", repo: "r" }, 11],
+			[{ owner: "o", repo: "r" }, 12],
 		]);
+		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+
+	it("issues labeled on a closed issue or a pull request is ignored", async () => {
+		await run("issues", {
+			action: "labeled",
+			issue: { number: 14, state: "closed" },
+		});
+		await run("issues", {
+			action: "labeled",
+			issue: { number: 15, pull_request: {} },
+		});
+		expect(triageIssue).not.toHaveBeenCalled();
 		expect(evaluatePull).not.toHaveBeenCalled();
 	});
 

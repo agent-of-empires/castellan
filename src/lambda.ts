@@ -45,7 +45,7 @@ interface Payload {
 		head_sha: string;
 		pull_requests: { number: number; base: { repo: { id: number } } }[];
 	};
-	issue?: { number: number };
+	issue?: { number: number; state?: string; pull_request?: object };
 	sha?: string;
 	context?: string;
 }
@@ -211,7 +211,11 @@ export function createHandler(deps: Deps) {
 		};
 		const issue = p.issue?.number;
 		const jobs: Job[] =
-			name === "issues" && p.action === "opened" && issue
+			name === "issues" &&
+			(p.action === "opened" || p.action === "labeled") &&
+			issue &&
+			p.issue?.state !== "closed" &&
+			!p.issue?.pull_request
 				? [[`issue ${full}#${issue}`, () => triageIssue(e, repoRef, issue)]]
 				: (await pullsFor(name, p, e)).map((n) => [
 						`pull ${full}#${n}`,

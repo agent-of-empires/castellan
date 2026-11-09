@@ -26,7 +26,7 @@ The Lambda, its role, the secret, the schedule and the AWS budget are defined in
   - `CASTELLAN_REPOS`: comma separated `owner/repo` list the bot acts on. Empty is a kill switch: every event and sweep is ignored.
   - There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Role permissions: read the secret (`secretsmanager:GetSecretValue`), and for `llm.provider: bedrock` (the default) invoke the configured models on Bedrock. The Anthropic provider cannot be used on Lambda today because there is no way to pass it a key; without one the review fails closed to `escalate`.
-- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs and issues labeled after they were opened.
+- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs.
 
 ### The secret
 
@@ -66,7 +66,7 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 | `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA  |
 | `pull_request_review` | `submitted`, except the App's own review                                               |
 | `status`              | any, except the `castellan` context itself                                             |
-| `issues`              | `opened` only: triage. An issue labeled `needs-triage` later is picked up by the sweep |
+| `issues`              | `opened`, `labeled`: triage. Issues without `needs-triage` exit early; the sweep is the fallback |
 | `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                            |
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
