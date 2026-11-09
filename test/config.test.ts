@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { describe, expect, it, vi } from "vitest";
+import { githubReader, loadConfig } from "../src/config.js";
+import type { GithubTransport } from "../src/github.js";
 
 const reader = (text: string | null) => async () => text;
 
@@ -77,5 +78,46 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 			return null;
 		});
 		expect(calls).toEqual([["base-sha", ".castellan.yml"]]);
+	});
+});
+
+describe("githubReader", () => {
+	const repo = { owner: "agent-of-empires", repo: "castellan" };
+	const transport = (request: unknown) =>
+		({ request }) as unknown as GithubTransport;
+
+	it("requests the file at the given base sha", async () => {
+		const request = vi.fn().mockResolvedValue({ data: "mode: off" });
+		const text = await githubReader(transport(request), repo)(
+			"abc123",
+			".castellan.yml",
+		);
+		expect(text).toBe("mode: off");
+		expect(request).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/contents/{path}",
+			expect.objectContaining({
+				...repo,
+				path: ".castellan.yml",
+				ref: "abc123",
+			}),
+		);
+	});
+
+	it("yields defaults on 404", async () => {
+		const request = vi.fn().mockRejectedValue({ status: 404 });
+		const r = await loadConfig(
+			"abc123",
+			githubReader(transport(request), repo),
+		);
+		expect(r).toMatchObject({ ok: true, config: { mode: "shadow" } });
+	});
+
+	it("fails closed on 500", async () => {
+		const request = vi.fn().mockRejectedValue({ status: 500 });
+		const read = githubReader(transport(request), repo);
+		await expect(read("abc123", ".castellan.yml")).rejects.toEqual({
+			status: 500,
+		});
+		expect(await loadConfig("abc123", read)).toMatchObject({ ok: false });
 	});
 });

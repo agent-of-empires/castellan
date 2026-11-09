@@ -1,5 +1,6 @@
 import { parse } from "yaml";
 import { z } from "zod";
+import type { GithubTransport, Repo } from "./github.js";
 
 export const CONFIG_PATH = ".castellan.yml";
 
@@ -20,8 +21,18 @@ const schema = z.strictObject({
 		.prefault({}),
 	teams: z
 		.strictObject({
-			maintainers: z.string().optional(),
-			protected: z.string().optional(),
+			maintainers: z
+				.string()
+				.optional()
+				.describe(
+					"Team slug within the installation org (the org comes from the event).",
+				),
+			protected: z
+				.string()
+				.optional()
+				.describe(
+					"Team slug within the installation org (the org comes from the event).",
+				),
 		})
 		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
@@ -59,16 +70,44 @@ export type ConfigResult =
 	| { ok: true; config: Config }
 	| { ok: false; error: string };
 
-export type ReadFile = (ref: string, path: string) => Promise<string | null>;
+export type ReadFile = (
+	baseSha: string,
+	path: string,
+) => Promise<string | null>;
 
-/** Reads `.castellan.yml` at `baseRef` only. `ok: false` means the caller must escalate. */
+/** Reads the file at `baseSha`, the base commit (`pull_request.base.sha`), never the head. 404 means null; other errors throw. */
+export function githubReader(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+): ReadFile {
+	return async (baseSha, path) => {
+		try {
+			const { data } = await transport.request(
+				"GET /repos/{owner}/{repo}/contents/{path}",
+				{
+					owner,
+					repo,
+					path,
+					ref: baseSha,
+					mediaType: { format: "raw" },
+				},
+			);
+			return data as unknown as string;
+		} catch (err) {
+			if ((err as { status?: number }).status === 404) return null;
+			throw err;
+		}
+	};
+}
+
+/** Reads `.castellan.yml` at `baseSha` only. `ok: false` means the caller must escalate. */
 export async function loadConfig(
-	baseRef: string,
+	baseSha: string,
 	readFile: ReadFile,
 ): Promise<ConfigResult> {
 	let raw: unknown = {};
 	try {
-		const text = await readFile(baseRef, CONFIG_PATH);
+		const text = await readFile(baseSha, CONFIG_PATH);
 		if (text !== null) raw = parse(text) ?? {};
 	} catch (e) {
 		return { ok: false, error: `cannot read ${CONFIG_PATH}: ${String(e)}` };
