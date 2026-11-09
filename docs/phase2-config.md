@@ -8,7 +8,7 @@ Design for castellan#21. Three config modes, an additive state log, and a dashbo
 | --------- | --------------------------------------------------------- | --------------------------------------------- |
 | `repo`    | `.castellan.yml` in each repo (today's behavior, default) | one repo, everything in git                   |
 | `central` | one YAML shared by an owner, plus each repo's file on top | orgs that want one policy in git, no database |
-| `db`      | DynamoDB documents, plus each repo's file on top           | orgs that edit policy in the dashboard        |
+| `db`      | DynamoDB documents, plus each repo's file on top          | orgs that edit policy in the dashboard        |
 
 The source is chosen per deployment, never per repo:
 
@@ -24,11 +24,11 @@ The source lands on `Env` in `src/pipeline.ts`, so all three adapters inherit it
 
 `CASTELLAN_CENTRAL_CONFIG`, one string, the prefix picks the backend:
 
-| Value                       | Reads                                                                 |
-| --------------------------- | --------------------------------------------------------------------- |
-| unset                       | `<event owner>/.github` repo, file `castellan.yml`, default branch     |
-| `owner/repo:path`           | that repo and path, default branch; `:path` optional (`castellan.yml`) |
-| `s3://bucket/key`           | that object                                                           |
+| Value             | Reads                                                                  |
+| ----------------- | ---------------------------------------------------------------------- |
+| unset             | `<event owner>/.github` repo, file `castellan.yml`, default branch     |
+| `owner/repo:path` | that repo and path, default branch; `:path` optional (`castellan.yml`) |
+| `s3://bucket/key` | that object                                                            |
 
 The git forms use the App token the pipeline already has (`contents:read`). The unset form is per owner, so one deployment installed on several orgs reads each org's own file.
 
@@ -53,9 +53,9 @@ prompt:
 # plugin-cron: .castellan.yml
 mode: enforce
 prompt:
-  guidance:              # appended after the central entry
+  guidance: # appended after the central entry
     - Cron expressions must have a test.
-skip_branches!:          # replaces, does not append
+skip_branches!: # replaces, does not append
   - release-plz-*
 ```
 
@@ -63,12 +63,12 @@ In `db` mode the layers are `owner/*` document, then `owner/repo` document, then
 
 ## Failure semantics
 
-| Situation                                          | Result                                                                 |
-| -------------------------------------------------- | ---------------------------------------------------------------------- |
-| `central`: file missing, invalid YAML, S3 denied   | fail closed for every repo of that owner: defaults, `config_invalid` escalation with the error |
-| `db`: no document for `owner/*` nor `owner/repo`   | defaults plus repo file. A fresh table is the normal first state       |
-| `db`: table unreachable or document invalid        | fail closed as above                                                   |
-| repo file invalid in any mode                      | fail closed, as today                                                  |
+| Situation                                        | Result                                                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `central`: file missing, invalid YAML, S3 denied | fail closed for every repo of that owner: defaults, `config_invalid` escalation with the error |
+| `db`: no document for `owner/*` nor `owner/repo` | defaults plus repo file. A fresh table is the normal first state                               |
+| `db`: table unreachable or document invalid      | fail closed as above                                                                           |
+| repo file invalid in any mode                    | fail closed, as today                                                                          |
 
 `central` is an explicit operator choice, so an absent file is a misconfiguration, not a fallback.
 
@@ -83,11 +83,11 @@ In `db` mode the layers are `owner/*` document, then `owner/repo` document, then
 
 One DynamoDB table, `CASTELLAN_TABLE`, string keys `pk` and `sk`.
 
-| Item            | `pk`                     | `sk`                           | Attributes                                                  |
-| --------------- | ------------------------ | ------------------------------ | ----------------------------------------------------------- |
-| config version  | `config#owner/repo` or `config#owner/*` | `v<N>`            | `yaml` (the document text), `updatedBy`, `updatedAt`        |
-| config pointer  | same                     | `current`                      | `version`                                                   |
-| event           | `repo#owner/repo`        | `<iso timestamp>#<pr>#<headSha>` | `verdict`, `reasons`, `model`, `inputTokens`, `outputTokens`, `costUsd`, `source` (`llm`, `cache`, `skipped`), `ttl` (90 days) |
+| Item           | `pk`                                    | `sk`                             | Attributes                                                                                                                     |
+| -------------- | --------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| config version | `config#owner/repo` or `config#owner/*` | `v<N>`                           | `yaml` (the document text), `updatedBy`, `updatedAt`                                                                           |
+| config pointer | same                                    | `current`                        | `version`                                                                                                                      |
+| event          | `repo#owner/repo`                       | `<iso timestamp>#<pr>#<headSha>` | `verdict`, `reasons`, `model`, `inputTokens`, `outputTokens`, `costUsd`, `source` (`llm`, `cache`, `skipped`), `ttl` (90 days) |
 
 Config documents are stored as YAML text, not decomposed fields, so there is one schema (`src/config.ts`) and one validator for all three sources. Every edit writes a new version and moves `current`; history is free.
 
