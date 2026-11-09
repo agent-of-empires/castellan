@@ -456,6 +456,17 @@ describe("triage", () => {
 		nothingWritten(w);
 	});
 
+	it("ignores extra keys in reasons and readyForAgent", async () => {
+		const w = world();
+		const { r } = await run(w, "", {
+			...answer,
+			readyForAgent: { ...answer.readyForAgent, extra: "x" },
+			reasons: { ...answer.reasons, readyForAgent: "copied" },
+		});
+		expect(r).toMatchObject({ ok: true });
+		expect(commentBody(w.request)).not.toContain("copied");
+	});
+
 	it("rejects a type whose label is missing in the repo", async () => {
 		const w = world({ repoLabels: REPO_LABELS.filter((l) => l !== "bug") });
 		const { r } = await run(w, "mode: enforce");
