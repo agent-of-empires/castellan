@@ -225,7 +225,7 @@ export function mergeDocs(lower: Doc, upper: Doc): Doc {
 					? mergeDocs(below, v)
 					: Array.isArray(below) && Array.isArray(v)
 						? [...new Set([...below, ...v])]
-						: v;
+						: unmark(v);
 	}
 	return out;
 }

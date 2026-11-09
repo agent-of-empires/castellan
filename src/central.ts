@@ -38,7 +38,12 @@ export function parseLocator(
 			`CASTELLAN_CENTRAL_CONFIG ${locator} must be owner/repo[:path] or s3://bucket/key`,
 		);
 	}
-	return { kind: "git", owner: o, repo, path: rest.join(":") || CENTRAL_PATH };
+	return {
+		kind: "git",
+		owner: o,
+		repo,
+		path: rest.join(":").replace(/^\/+/, "") || CENTRAL_PATH,
+	};
 }
 
 const label = (loc: CentralLocation) =>

@@ -52,6 +52,12 @@ describe("mergeDocs", () => {
 		expect(out).toEqual({ prompt: { guidance: ["b"] }, skip_branches: ["y"] });
 	});
 
+	it("drops the marker when the lower value is null or another type", () => {
+		expect(
+			mergeDocs({ triage: null }, { triage: { "priority_labels!": ["P0"] } }),
+		).toEqual({ triage: { priority_labels: ["P0"] } });
+	});
+
 	it("drops the marker even when the lower layer lacks the key", () => {
 		expect(
 			mergeDocs({}, { "guidance!": ["b"], prompt: { "guidance!": ["c"] } }),
@@ -125,6 +131,15 @@ describe("parseLocator", () => {
 		});
 		expect(parseLocator("a/b:cfg/c.yml", "x")).toMatchObject({
 			path: "cfg/c.yml",
+		});
+	});
+
+	it("strips a leading slash from the git path", () => {
+		expect(parseLocator("o/r:/castellan.yml", "x")).toEqual({
+			kind: "git",
+			owner: "o",
+			repo: "r",
+			path: "castellan.yml",
 		});
 	});
 
