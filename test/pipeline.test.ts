@@ -131,12 +131,21 @@ describe("evaluatePull", () => {
 		expect(w.graphql).toHaveBeenCalledTimes(1);
 	});
 
-	it("reads config from the base sha", async () => {
+	it("reads config at the base branch ref, not the stale base sha", async () => {
 		const w = world();
 		await evaluatePull(w.env, repo, 3);
 		expect(w.request).toHaveBeenCalledWith(
 			"GET /repos/{owner}/{repo}/contents/{path}",
-			expect.objectContaining({ path: ".castellan.yml", ref: "base1" }),
+			expect.objectContaining({ path: ".castellan.yml", ref: "main" }),
+		);
+	});
+
+	it("reads CODEOWNERS at the base branch ref", async () => {
+		const w = world({ yaml: "teams: { protected: core }" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.request).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/contents/{path}",
+			expect.objectContaining({ path: ".github/CODEOWNERS", ref: "main" }),
 		);
 	});
 

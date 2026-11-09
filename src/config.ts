@@ -148,17 +148,14 @@ export type ConfigResult =
 	| { ok: true; config: Config }
 	| { ok: false; error: string };
 
-export type ReadFile = (
-	baseSha: string,
-	path: string,
-) => Promise<string | null>;
+export type ReadFile = (ref: string, path: string) => Promise<string | null>;
 
-/** Reads the file at `baseSha`, the base commit (`pull_request.base.sha`), never the head. 404 means null; other errors throw. */
+/** Reads the file at `ref`, the base branch (`pull_request.base.ref`), never the head. 404 means null; other errors throw. */
 export function githubReader(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
 ): ReadFile {
-	return async (baseSha, path) => {
+	return async (ref, path) => {
 		try {
 			const { data } = await transport.request(
 				"GET /repos/{owner}/{repo}/contents/{path}",
@@ -166,7 +163,7 @@ export function githubReader(
 					owner,
 					repo,
 					path,
-					ref: baseSha,
+					ref,
 					mediaType: { format: "raw" },
 				},
 			);
@@ -178,14 +175,14 @@ export function githubReader(
 	};
 }
 
-/** Reads `.castellan.yml` at `baseSha` only. `ok: false` means the caller must escalate. */
+/** Reads `.castellan.yml` at `ref` only. `ok: false` means the caller must escalate. */
 export async function loadConfig(
-	baseSha: string,
+	ref: string,
 	readFile: ReadFile,
 ): Promise<ConfigResult> {
 	let raw: unknown = {};
 	try {
-		const text = await readFile(baseSha, CONFIG_PATH);
+		const text = await readFile(ref, CONFIG_PATH);
 		if (text !== null) raw = parse(text) ?? {};
 	} catch (e) {
 		return { ok: false, error: `cannot read ${CONFIG_PATH}: ${String(e)}` };
