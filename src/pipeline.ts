@@ -275,7 +275,7 @@ export async function triageIssue(
 		env.transport,
 		repoRef,
 		env.llm,
-		opts,
+		{ ...opts, login: env.login },
 	);
 }
 

@@ -187,7 +187,7 @@ export async function triage(
 	transport: GithubTransport,
 	repoRef: Repo,
 	deps: LlmDeps = {},
-	opts: { dryRun?: boolean } = {},
+	opts: { dryRun?: boolean; login?: string } = {},
 ): Promise<TriageResult> {
 	const { owner, repo } = repoRef;
 	if (config.mode === "off" || !config.triage.enabled)
@@ -306,6 +306,16 @@ export async function triage(
 
 	const isFeature = haveType ? haveType === feature : c.type === "feature";
 	const priority = existingPriority ?? c.priority;
+	if (
+		!havePriority &&
+		(!priority_labels.includes(priority) || !labelNames.has(priority))
+	) {
+		return {
+			ok: false,
+			error: "unresolved",
+			detail: `priority label not found or not configured: ${priority}`,
+		};
+	}
 	const status = existingStatus ?? status_by_priority[priority];
 	const roadmap = status ? roadmap_by_status[status] : undefined;
 	if (!status || (isFeature && !roadmap)) {
@@ -317,7 +327,7 @@ export async function triage(
 	}
 
 	const labels = [
-		...(havePriority ? [] : [c.priority]),
+		...(havePriority ? [] : [priority]),
 		...(haveArea ? [] : [c.area]),
 		...(haveType ? [] : [c.type === "bug" ? bug : feature]),
 	];
@@ -355,6 +365,10 @@ export async function triage(
 	};
 
 	if (opts.dryRun) return { ok: true, proposal };
+	const comments = await transport.paginate(
+		"GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+		{ owner, repo, issue_number: issue.number, per_page: 100 },
+	);
 
 	if (labels.length) {
 		await transport.request(
@@ -394,10 +408,26 @@ export async function triage(
 		);
 	}
 	lines.push("", "Fit is not set by triage; it stays with maintainers.");
-	await transport.request(
-		"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-		{ owner, repo, issue_number: issue.number, body: lines.join("\n") },
-	);
+	// Ignore model prose when identifying the same outcome.
+	const marker = `<!-- castellan triage ${hashOf([labels, fields, notSet, c.readyForAgent.suggest])} -->`;
+	if (
+		!comments.some(
+			(comment) =>
+				opts.login !== undefined &&
+				comment.user?.login === opts.login &&
+				comment.body?.trimEnd().endsWith(marker),
+		)
+	) {
+		await transport.request(
+			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+			{
+				owner,
+				repo,
+				issue_number: issue.number,
+				body: [...lines, "", marker].join("\n"),
+			},
+		);
+	}
 
 	await removeNeedsTriage();
 	return { ok: true, proposal };

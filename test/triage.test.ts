@@ -81,6 +81,8 @@ function world(
 		repoLabels?: string[];
 		pageSize?: number;
 		failSet?: boolean;
+		comments?: { body: string; login: string }[];
+		failComments?: boolean;
 	} = {},
 ) {
 	const log: string[] = [];
@@ -133,11 +135,23 @@ function world(
 		log.push(route);
 		return { data: {} };
 	});
+	const paginate = vi.fn(async (route: string) => {
+		if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}/comments") {
+			if (opts.failComments) throw new Error("comments unavailable");
+			return (opts.comments ?? []).map(({ body, login }, i) => ({
+				id: i + 1,
+				body,
+				user: { login },
+			}));
+		}
+		return [];
+	});
 	return {
 		graphql,
+		paginate,
 		request,
 		log,
-		transport: { graphql, request } as unknown as GithubTransport,
+		transport: { graphql, paginate, request } as unknown as GithubTransport,
 	};
 }
 
@@ -167,9 +181,14 @@ const run = async (
 	out: unknown = answer,
 ) => {
 	const m = llm(out);
-	const r = await triage(issue, await cfg(yaml), w.transport, repo, {
-		client: m.client,
-	});
+	const r = await triage(
+		issue,
+		await cfg(yaml),
+		w.transport,
+		repo,
+		{ client: m.client },
+		{ login: "castellan[bot]" },
+	);
 	return { r, m };
 };
 
@@ -552,6 +571,107 @@ describe("triage", () => {
 		expect(body).not.toMatch(/@\w/);
 		expect(body).not.toContain("http");
 		expect(body).toContain("ping bob click or");
+	});
+
+	it("labels the existing project priority, not the model's guess", async () => {
+		const w = world({
+			labels: ["needs-triage", "area:core", "bug"],
+			items: [
+				{
+					id: "IT",
+					project: { id: "PRJ" },
+					fieldValues: {
+						nodes: [{ name: "P0", field: { name: "Priority" } }],
+					},
+				},
+			],
+		});
+		const { r } = await run(w, "mode: enforce");
+		// area:core and bug are already labels, so only the priority label is proposed
+		expect(r).toMatchObject({
+			proposal: {
+				labels: ["P0"],
+				fields: [
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Ready" },
+				],
+			},
+		});
+		expect(w.request.mock.calls[0]?.[1]).toMatchObject({ labels: ["P0"] });
+	});
+
+	it.each([
+		["unconfigured", "Urgent", [...REPO_LABELS, "Urgent"]],
+		["missing repository label", "P0", REPO_LABELS.filter((l) => l !== "P0")],
+	])(
+		"rejects %s project priority before writes",
+		async (_name, priority, repoLabels) => {
+			const w = world({
+				repoLabels,
+				items: [
+					{
+						id: "IT",
+						project: { id: "PRJ" },
+						fieldValues: {
+							nodes: [
+								{ name: priority, field: { name: "Priority" } },
+								{ name: "Ready", field: { name: "Status" } },
+							],
+						},
+					},
+				],
+			});
+			const { r } = await run(w, "mode: enforce");
+			expect(r).toMatchObject({ ok: false, error: "unresolved" });
+			nothingWritten(w);
+		},
+	);
+
+	it("does not repeat an outcome when model reasons change", async () => {
+		const first = world();
+		await run(first, "");
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
+		});
+		await run(second, "", {
+			...answer,
+			readyForAgent: { suggest: true, reason: "different reason" },
+			reasons: {
+				priority: "different",
+				area: "different",
+				type: "different",
+				size: "different",
+			},
+		});
+		expect(routes(second.request)).not.toContain(COMMENT);
+	});
+
+	it("does not trust another author's matching marker", async () => {
+		const first = world();
+		await run(first, "");
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "someone-else" }],
+		});
+		await run(second, "");
+		expect(routes(second.request)).toContain(COMMENT);
+	});
+
+	it("posts again when the proposal changed", async () => {
+		const first = world();
+		await run(first, "", { ...answer, priority: "P3" });
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
+		});
+		await run(second, "");
+		expect(routes(second.request)).toContain(COMMENT);
+	});
+
+	it("makes no writes when comment lookup fails", async () => {
+		const w = world({ failComments: true });
+		await expect(run(w, "mode: enforce")).rejects.toThrow(
+			"comments unavailable",
+		);
+		nothingWritten(w);
 	});
 });
 

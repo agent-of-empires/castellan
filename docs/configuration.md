@@ -301,7 +301,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - The model must choose a priority from `triage.priority_labels` and an area from the repo's existing `area:*` labels, and both labels must exist. Sizes are `XS`, `S`, `M`, `L`, `XL`. Labels are not created.
 - Every name is resolved before any write. A missing project field or option is skipped and named in the comment as `Not set: ...`; a missing project, label or status/roadmap mapping still fails closed with nothing written.
 - Fit is never set. `ready-for-agent` is only ever suggested in the comment, never applied.
-- No result is cached: each run on a `needs-triage` issue calls the model and posts a new comment.
+- No model result is cached: each run that needs classification calls the model. Sequential runs do not repeat a comment for the same labels, fields and readiness suggestion from Castellan. Concurrent runs can both post a comment if they read comments before either posts.
 
 ### Runtime
 
