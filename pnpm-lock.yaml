@@ -14,6 +14,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^1.6.0
         version: 1.6.0(zod@4.6.7)
+      '@aws-sdk/client-secrets-manager':
+        specifier: ^3.1164.0
+        version: 3.1164.0
       octokit:
         specifier: ^5.0.5
         version: 5.0.5
@@ -68,6 +71,10 @@ packages:
 
   '@aws-sdk/client-bedrock-runtime@3.1164.0':
     resolution: {integrity: sha512-yQDXRDOK5RiyucumWsdiz5d69+Winj/7B0bLr8vAHK04XtCY3aVPY3aJHFBnzPyZXbXaq0RsQgbcsaYgaZL4gA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-secrets-manager@3.1164.0':
+    resolution: {integrity: sha512-c1FFvJdhZLVLznVccXQ0/YVDQIjF0azsqiQz8XhZ2FDW/vfPr/UnLjMY34ZUVABPbk7HD8N+7GRVhhJ7ddVCAg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.980.1':
@@ -1307,6 +1314,17 @@ snapshots:
       '@aws-sdk/middleware-eventstream': 3.972.36
       '@aws-sdk/middleware-websocket': 3.972.64
       '@aws-sdk/token-providers': 3.1164.0
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.39.0
+      '@smithy/fetch-http-handler': 5.8.1
+      '@smithy/node-http-handler': 4.14.2
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
+  '@aws-sdk/client-secrets-manager@3.1164.0':
+    dependencies:
+      '@aws-sdk/core': 3.980.1
+      '@aws-sdk/credential-provider-node': 3.972.94
       '@aws-sdk/types': 3.975.0
       '@smithy/core': 3.39.0
       '@smithy/fetch-http-handler': 5.8.1

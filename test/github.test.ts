@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { Octokit } from "octokit";
 import { describe, expect, it, vi } from "vitest";
 import {
+	appLogin,
 	createGithubClient,
 	type GithubTransport,
 	installationTransport,
@@ -168,5 +169,36 @@ describe("installationTransport", () => {
 		);
 		expect(apiCalls).toHaveLength(2);
 		for (const c of apiCalls) expect(c.auth).toBe("token ghs_installation");
+	});
+});
+
+describe("appLogin", () => {
+	it("derives <slug>[bot] from GET /app with an App JWT", async () => {
+		const { privateKey } = generateKeyPairSync("rsa", {
+			modulusLength: 2048,
+			privateKeyEncoding: { type: "pkcs8", format: "pem" },
+			publicKeyEncoding: { type: "spki", format: "pem" },
+		});
+		const fetchMock = vi.fn(
+			async (input: Request | string | URL, init?: RequestInit) => {
+				const req = input instanceof Request ? input : null;
+				const url = req ? req.url : String(input);
+				const auth = new Headers(req ? req.headers : init?.headers).get(
+					"authorization",
+				);
+				expect(url).toBe("https://api.github.com/app");
+				expect(auth).toMatch(/^bearer /i);
+				return new Response(JSON.stringify({ slug: "castellan" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			},
+		);
+		expect(
+			await appLogin(
+				{ appId: 1, privateKey, installationId: 42 },
+				fetchMock as unknown as typeof fetch,
+			),
+		).toBe("castellan[bot]");
 	});
 });

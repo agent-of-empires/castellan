@@ -23,19 +23,35 @@ export interface AppCredentials {
 	installationId: number;
 }
 
-/** Octokit authenticated as an App installation. The App caches installation tokens until they near expiry. */
-export function installationTransport(
-	{ appId, privateKey, installationId }: AppCredentials,
+function newApp(
+	{ appId, privateKey }: AppCredentials,
 	fetchImpl?: typeof fetch,
-): Promise<GithubTransport> {
-	const app = new App({
+) {
+	return new App({
 		appId,
 		privateKey,
 		...(fetchImpl && {
 			Octokit: Octokit.defaults({ request: { fetch: fetchImpl } }),
 		}),
 	});
-	return app.getInstallationOctokit(installationId);
+}
+
+/** Octokit authenticated as an App installation. The App caches installation tokens until they near expiry. */
+export function installationTransport(
+	creds: AppCredentials,
+	fetchImpl?: typeof fetch,
+): Promise<GithubTransport> {
+	return newApp(creds, fetchImpl).getInstallationOctokit(creds.installationId);
+}
+
+/** The App's own `<slug>[bot]` login, from `GET /app` (App JWT, not an installation token). */
+export async function appLogin(
+	creds: AppCredentials,
+	fetchImpl?: typeof fetch,
+): Promise<string> {
+	const { data } = await newApp(creds, fetchImpl).octokit.request("GET /app");
+	if (!data?.slug) throw new Error("GET /app returned no slug");
+	return `${data.slug}[bot]`;
 }
 
 export function createGithubClient(
