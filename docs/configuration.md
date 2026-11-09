@@ -227,7 +227,7 @@ First rule with a hit decides; all hits of that one rule are listed, and the com
 | `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                         |
 | `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral, skipped or still running                                                         |
 | `check_pending`                      | a check run is pending, queued or in progress                                                                                                                |
-| `required_check`                     | a check required by the active rulesets for the base branch is missing, or did not end in success or neutral (skipped does not count)                        |
+| `required_check`                     | a check required by the active rulesets for the base branch is missing, or did not end in success, neutral or skipped (as on GitHub)|
 | `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                        |
 | `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                              |
 | `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                           |
