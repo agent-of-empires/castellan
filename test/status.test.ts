@@ -47,6 +47,16 @@ describe("status", () => {
 		});
 	});
 
+	it("never splits a surrogate pair when truncating", () => {
+		const { description } = statusFor(
+			"escalate",
+			"shadow",
+			"\u{1F600}".repeat(200),
+		);
+		expect(Array.from(description)).toHaveLength(140);
+		expect(description).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+	});
+
 	it("keeps the shadow description within GitHub's 140 character limit", () => {
 		const { description } = statusFor("escalate", "shadow", "x".repeat(500));
 		expect(description).toHaveLength(140);

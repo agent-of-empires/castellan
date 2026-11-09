@@ -24,7 +24,7 @@ export function statusFor(
 				: `shadow: would escalate${reason ? ` (${reason.replace(/\s+/g, " ")})` : ""}`;
 		return {
 			state: "success" as const,
-			description: text.slice(0, DESCRIPTION_LIMIT),
+			description: Array.from(text).slice(0, DESCRIPTION_LIMIT).join(""),
 		};
 	}
 	return verdict === "merge"
