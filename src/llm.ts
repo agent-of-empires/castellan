@@ -12,7 +12,7 @@ export interface ReviewInput {
 	reviewerSummary?: string;
 }
 
-const verdictSchema = z.strictObject({
+export const verdictSchema = z.strictObject({
 	intent_match: z.boolean(),
 	new_behavior: z.boolean(),
 	reasons: z.array(
@@ -43,6 +43,8 @@ export type ReviewResult =
 			promptHash: string;
 	  }
 	| { ok: false; error: FailureReason; detail?: string; promptHash: string };
+
+export type OkReviewResult = Extract<ReviewResult, { ok: true }>;
 
 /** The slice of the SDK the client uses; both Anthropic and AnthropicBedrock satisfy it. */
 export interface MessagesClient {
