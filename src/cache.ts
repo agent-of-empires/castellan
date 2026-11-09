@@ -71,17 +71,17 @@ export type Dedup =
 	| { source: "skipped" };
 
 /**
- * Rule-escalated PRs never reach the LLM. A cache hit needs headSha, promptHash and
+ * `skipModel` PRs never reach the LLM. A cache hit needs headSha, promptHash and
  * model to all match; any other change runs fresh. The caller must only persist `ok: true`.
  */
 export async function getOrRun(opts: {
 	cached: CacheBlock | null;
 	key: CacheKey;
-	ruleEscalated: boolean;
+	skipModel: boolean;
 	run: () => Promise<ReviewResult>;
 }): Promise<Dedup> {
-	const { cached, key, ruleEscalated, run } = opts;
-	if (ruleEscalated) return { source: "skipped" };
+	const { cached, key, skipModel, run } = opts;
+	if (skipModel) return { source: "skipped" };
 	if (
 		cached?.llm &&
 		cached.headSha === key.headSha &&

@@ -152,6 +152,28 @@ describe("evaluatePull", () => {
 		expect(w.routes()).not.toContain(APPROVE);
 	});
 
+	it("runs the model on a rule escalation in shadow, as advice only", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledOnce();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("**Verdict: escalate** (shadow)");
+		expect(body).toContain("advisory, rules decided the verdict");
+		expect(
+			w.request.mock.calls.find((c) => c[0] === STATUS)?.[1],
+		).toMatchObject({ state: "success" });
+	});
+
+	it("does not run the model on a rule escalation in enforce", async () => {
+		const w = world({ yaml: "mode: enforce" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Model: not run (rules decided)");
+	});
+
 	it("fails closed when the model is unavailable", async () => {
 		const w = world();
 		w.create.mockRejectedValue(new Error("down"));

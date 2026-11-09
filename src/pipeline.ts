@@ -96,7 +96,7 @@ export interface PullResult {
  * Runs the full pipeline for one PR: snapshot, rules, model, verdict, act.
  * With `dryRun` nothing is written (no comment, status, approval or merge) and
  * the brief is returned. Once the head is known (team lookup and snapshot included), a failure sets the status to
- * pending (escalated) so a stale `success` cannot stay, then rethrows.
+ * pending (success in shadow) so a stale `success` cannot stay, then rethrows.
  */
 export async function evaluatePull(
 	env: Env,
@@ -174,7 +174,10 @@ export async function evaluatePull(
 		const dedup = await getOrRun({
 			cached: sticky ? parseBlock(sticky.body) : null,
 			key,
-			ruleEscalated: decision.outcome === "escalate",
+			// Shadow also runs the model on rule escalations, as advice only.
+			skipModel:
+				decision.outcome === "escalate" &&
+				(config.mode !== "shadow" || !!error),
 			run: async () => {
 				const linked = snapshot.linkedIssues[0];
 				const issue = linked ? await getIssue(env, repoRef, linked) : null;
@@ -199,6 +202,7 @@ export async function evaluatePull(
 			checks: snapshot.checks,
 			review: result?.ok ? result : undefined,
 			source: dedup.source,
+			shadow: config.mode === "shadow",
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {
@@ -221,8 +225,8 @@ export async function evaluatePull(
 				repo,
 				sha: pr.head.sha,
 				context: STATUS_CONTEXT,
-				...statusFor("escalate"),
-				description: "castellan: internal error",
+				...statusFor("escalate", config.mode),
+				description: `${config.mode === "shadow" ? "shadow" : "castellan"}: internal error`,
 			})
 			.catch((e) => console.error("fail-closed status failed", e));
 		throw err;
