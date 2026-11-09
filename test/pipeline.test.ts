@@ -181,6 +181,19 @@ describe("evaluatePull", () => {
 		});
 	});
 
+	it("logs the failure detail when the model call fails", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockRejectedValue(new Error("AccessDeniedException: no access"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(warn).toHaveBeenCalledWith("model review failed", {
+			error: "sdk_error",
+			detail: expect.stringContaining("AccessDeniedException"),
+		});
+		warn.mockRestore();
+	});
+
 	it("leaves the reasons unchanged when the model vetoes a rule escalation in shadow", async () => {
 		const base = world({ yaml: "mode: shadow" });
 		const expected = (await evaluatePull(base.env, repo, 3)).brief?.outcome
