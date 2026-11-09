@@ -31,10 +31,11 @@ type Rule = (s: Snapshot, c: Config, required: string[], x: Context) => Hit[];
 
 const SKIPPED_AUTHORS = ["dependabot[bot]"];
 const PASSING = ["success", "neutral"];
+const PENDING = ["pending", "queued", "in_progress"];
 const OK = [...PASSING, "skipped"];
 const GENERATED =
 	/(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock)$|\.generated\.|(^|\/)(dist|generated)\//;
-const MIGRATION = /(^|\/)migrations?\//;
+const CODEOWNERS_FILE = /^(\.github\/|docs\/)?CODEOWNERS$/;
 
 const when = (cond: boolean, text: string): Hit[] => (cond ? [{ text }] : []);
 const paths = (files: string[], text: string): Hit[] =>
@@ -57,12 +58,16 @@ function glob(p: string) {
 		.join("");
 }
 
-/** Gitignore-like: a pattern without a slash matches at any depth, a match covers everything below it. */
+/** GitHub CODEOWNERS semantics: no slash means any depth, `dir/` and `dir/**` recurse, `dir/*` does not. */
 function matchesPath(pattern: string, path: string) {
-	const p = pattern.replace(/\/$/, "");
-	const anchored = p.startsWith("/") || p.includes("/");
-	const body = glob(p.replace(/^\//, ""));
-	return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${body}(?:/.*)?$`).test(
+	const dir = pattern.endsWith("/");
+	const p = pattern.replace(/^\//, "");
+	const anchored =
+		pattern.startsWith("/") || p.replace(/\/$/, "").includes("/");
+	const last = p.slice(p.lastIndexOf("/") + 1);
+	const below = dir || /[*?]/.test(last) ? "" : "(?:/.*)?";
+	const body = glob(dir ? `${p}**` : p);
+	return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${body}${below}$`).test(
 		path,
 	);
 }
@@ -85,6 +90,8 @@ function humanChangesRequested(s: Snapshot) {
 	}
 	return [...latest].filter(([, state]) => state === "CHANGES_REQUESTED");
 }
+
+const slug = (team: string) => team.replace(/^.*\//, "");
 
 const SKIP: Record<string, Rule> = {
 	draft: (s) => when(s.draft, "PR is a draft"),
@@ -109,6 +116,11 @@ const SKIP: Record<string, Rule> = {
 const ESCALATE: Record<string, Rule> = {
 	castellan_config: (s) =>
 		paths(touching(s, [CONFIG_PATH]), `touches ${CONFIG_PATH}`),
+	codeowners_file: (s) =>
+		paths(
+			s.files.map((f) => f.path).filter((p) => CODEOWNERS_FILE.test(p)),
+			"touches CODEOWNERS",
+		),
 	github_dir: (s) => paths(touching(s, [".github/"]), "touches .github/"),
 	protected_path: (s, c) =>
 		paths(
@@ -116,19 +128,25 @@ const ESCALATE: Record<string, Rule> = {
 			"touches a protected or release path",
 		),
 	protected_owner: (s, c, _r, x) => {
-		const team = c.teams.protected;
+		const team = c.teams.protected && slug(c.teams.protected);
 		if (!team) return [];
 		const owned = s.files
 			.map((f) => f.path)
 			.filter((p) => {
 				const rule = x.codeowners.findLast((r) => matchesPath(r.pattern, p));
-				return rule?.owners.some((o) => o.endsWith(`/${team}`));
+				return rule?.owners.some(
+					(o) => o.startsWith("@") && o.includes("/") && slug(o) === team,
+				);
 			});
 		return paths(owned, `owned by the protected team ${team}`);
 	},
 	check_failing: (s) =>
 		s.checks
-			.filter((k) => !OK.includes(k.conclusion))
+			.filter((k) => ![...OK, ...PENDING].includes(k.conclusion))
+			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
+	check_pending: (s) =>
+		s.checks
+			.filter((k) => PENDING.includes(k.conclusion))
 			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	required_check: (s, _c, required) =>
 		required
@@ -155,20 +173,16 @@ const ESCALATE: Record<string, Rule> = {
 		),
 	max_dirs: (s, c) => {
 		const dirs = new Set(
-			s.files
-				.filter((f) => f.path.includes("/"))
-				.map((f) => f.path.split("/")[0]),
+			s.files.map((f) => (f.path.includes("/") ? f.path.split("/")[0] : "")),
 		);
 		return when(
 			dirs.size > c.limits.maxTopLevelDirs,
 			`${dirs.size} top-level dirs changed, limit ${c.limits.maxTopLevelDirs}`,
 		);
 	},
-	migration: (s) =>
-		paths(
-			s.files.map((f) => f.path).filter((p) => MIGRATION.test(p)),
-			"touches a migration",
-		),
+	diff_truncated: (s) => when(s.diffTruncated, "diff was truncated"),
+	migration: (s, c) =>
+		paths(touching(s, c.paths.migrations), "touches a migration"),
 	generated_only: (s) =>
 		when(
 			s.files.length > 0 && s.files.every((f) => GENERATED.test(f.path)),
@@ -178,11 +192,16 @@ const ESCALATE: Record<string, Rule> = {
 		humanChangesRequested(s).map(([login]) => ({
 			text: `${login} requested changes`,
 		})),
+	body_truncated: (s) =>
+		when(s.bodyTruncated, "PR body was truncated, stacked check unreliable"),
 	stacked: (s) =>
 		when(/\bstacked on #\d+/i.test(s.body), "PR is stacked on another PR"),
 	author_class: (s, c, _r, x) => {
 		if (s.authorClass === "bot") return [{ text: "bot authors never merge" }];
 		if (s.authorClass !== "external") return [];
+		if (/^\w+(\(.*\))?!:/.test(s.title)) {
+			return [{ text: "external breaking change always goes to a human" }];
+		}
 		if (/^feat(\(.*\))?!?:/i.test(s.title)) {
 			return [{ text: "external feat: always goes to a human" }];
 		}
@@ -195,6 +214,8 @@ const ESCALATE: Record<string, Rule> = {
 		);
 	},
 };
+
+export const RULE_IDS = [...Object.keys(SKIP), ...Object.keys(ESCALATE)];
 
 /** Deny by default; first rule that hits decides. `candidate` still needs the model. */
 export function evaluate(

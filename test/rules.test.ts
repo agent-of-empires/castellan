@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type Config, loadConfig } from "../src/config.js";
-import { type Context, evaluate } from "../src/rules.js";
+import { type Context, evaluate, RULE_IDS } from "../src/rules.js";
 import type { Snapshot } from "../src/snapshot.js";
 
 const load = async (yaml = "") => {
@@ -113,6 +113,9 @@ describe("escalate rules", () => {
 		});
 
 	escalates("castellan_config", { files: [file(".castellan.yml")] });
+	for (const path of ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]) {
+		escalates("codeowners_file", { files: [file(path)] });
+	}
 	escalates("github_dir", { files: [file(".github/workflows/ci.yml")] });
 	escalates(
 		"protected_path",
@@ -124,23 +127,25 @@ describe("escalate rules", () => {
 		{ files: [file("infra/main.tf")] },
 		{ yaml: "paths: { release: ['infra/'] }" },
 	);
-	escalates(
-		"protected_owner",
-		{ files: [file("src/core/x.ts")] },
-		{
-			yaml: "teams: { protected: sec }",
-			x: { codeowners: [{ pattern: "/src/core/", owners: ["@org/sec"] }] },
-		},
-	);
+	for (const team of ["sec", "org/sec"]) {
+		escalates(
+			"protected_owner",
+			{ files: [file("src/core/x.ts")] },
+			{
+				yaml: `teams: { protected: ${team} }`,
+				x: { codeowners: [{ pattern: "/src/core/", owners: ["@org/sec"] }] },
+			},
+		);
+	}
 	escalates("check_failing", {
 		checks: [
 			{ name: "ci", conclusion: "success" },
 			{ name: "lint", conclusion: "failure" },
 		],
 	});
-	escalates("check_failing", {
-		checks: [{ name: "ci", conclusion: "pending" }],
-	});
+	for (const conclusion of ["pending", "queued", "in_progress"]) {
+		escalates("check_pending", { checks: [{ name: "ci", conclusion }] });
+	}
 	escalates("required_check", { checks: [] });
 	escalates("required_check", {
 		checks: [{ name: "ci", conclusion: "skipped" }],
@@ -154,7 +159,14 @@ describe("escalate rules", () => {
 	escalates("max_dirs", {
 		files: [file("src/a.ts", 1), file("test/a.ts", 1), file("docs/a.md", 1)],
 	});
+	escalates("diff_truncated", { diffTruncated: true });
+	escalates("body_truncated", { bodyTruncated: true });
 	escalates("migration", { files: [file("db/migrations/001.sql")] });
+	escalates(
+		"migration",
+		{ files: [file("sql/001.sql")] },
+		{ yaml: "paths: { migrations: ['sql/'] }" },
+	);
 	escalates("generated_only", { files: [file("pnpm-lock.yaml")] });
 	escalates("human_changes_requested", {
 		reviews: [{ login: "bob", state: "CHANGES_REQUESTED", commitId: "old" }],
@@ -222,9 +234,40 @@ describe("rule details", () => {
 		expect(run(snap({ reviews })).outcome).toBe("candidate");
 	});
 
-	it("root files do not count as top-level dirs", () => {
+	it("root files count as one top-level dir", () => {
 		const files = [file("a.md", 1), file("b.md", 1), file("src/a.ts", 1)];
 		expect(run(snap({ files })).outcome).toBe("candidate");
+		files.push(file("test/a.ts", 1));
+		expect(rulesOf(run(snap({ files })))).toEqual(["max_dirs"]);
+	});
+
+	it("CODEOWNERS globs follow GitHub semantics", async () => {
+		const c = await load("teams: { protected: sec }");
+		const owned = (codeowners: Context["codeowners"], path: string) =>
+			run(snap({ files: [file(path)] }), c, ["ci"], ctx({ codeowners }))
+				.outcome === "escalate";
+		const sec = (pattern: string) => ({ pattern, owners: ["@org/sec"] });
+		const dev = (pattern: string) => ({ pattern, owners: ["@org/dev"] });
+
+		expect(owned([sec("/src/core/"), dev("/src/*")], "src/core/x.ts")).toBe(
+			true,
+		);
+		expect(owned([sec("docs/*")], "docs/a.md")).toBe(true);
+		expect(owned([sec("docs/*")], "docs/x/a.md")).toBe(false);
+		expect(owned([sec("docs/")], "docs/x/a.md")).toBe(true);
+		expect(owned([sec("docs/**")], "docs/x/a.md")).toBe(true);
+		expect(owned([sec("*.sql")], "a/b/c.sql")).toBe(true);
+		expect(owned([sec("/*.sql")], "a/b.sql")).toBe(false);
+		expect(owned([sec("/*.sql")], "b.sql")).toBe(true);
+		expect(owned([sec("src/core")], "src/core/x.ts")).toBe(true);
+	});
+
+	it("external breaking titles always escalate", () => {
+		for (const title of ["fix!: x", "fix(api)!: x", "feat!: x"]) {
+			const d = run(snap({ authorClass: "external", title }));
+			expect(rulesOf(d)).toEqual(["author_class"]);
+		}
+		expect(run(snap({ title: "fix!: x" })).outcome).toBe("candidate");
 	});
 
 	it("generated plus real change is not generated-only", () => {
@@ -267,43 +310,119 @@ describe("author classes", () => {
 });
 
 describe("order", () => {
+	const yaml =
+		"paths: { protected: ['src/auth/**'] }\nteams: { protected: sec }";
+	const x = ctx({
+		codeowners: [{ pattern: "/src/core/", owners: ["@org/sec"] }],
+	});
+	const required = ["ci", "lint"];
 	const everything = snap({
 		draft: true,
+		author: "dependabot[bot]",
 		baseRef: "release/1",
 		headRef: "release-plz-1",
 		authorClass: "bot",
-		title: "feat: x",
+		title: "feat!: x",
 		body: "Stacked on #1",
+		bodyTruncated: true,
+		diffTruncated: true,
 		codeRabbit: "CHANGES_REQUESTED",
-		checks: [{ name: "ci", conclusion: "failure" }],
-		files: [file(".castellan.yml", 500), file(".github/a.yml")],
+		checks: [
+			{ name: "ci", conclusion: "failure" },
+			{ name: "lint", conclusion: "pending" },
+		],
+		files: [
+			".castellan.yml",
+			"CODEOWNERS",
+			".github/a.yml",
+			"src/auth/t.ts",
+			"src/core/x.ts",
+			"migrations/1.sql",
+		].map((p) => file(p, 1)),
 		reviews: [{ login: "bob", state: "CHANGES_REQUESTED", commitId: "a" }],
 	});
+	const files = (...paths: string[]) => ({
+		files: paths.map((p) => file(p, 1)),
+	});
+	const green = [
+		{ name: "ci", conclusion: "success" },
+		{ name: "lint", conclusion: "success" },
+	];
 
-	it("skip beats escalate", () => {
-		expect(rulesOf(run(everything))).toEqual(["draft"]);
+	it("skip beats escalate", async () => {
+		const c = await load(yaml);
+		expect(rulesOf(run(everything, c, required, x))).toEqual(["draft"]);
 	});
 
-	it("walks the pipeline in RFC order, one hit at a time", () => {
-		const steps: [string, Partial<Snapshot>][] = [
+	it("walks every rule in order, one hit at a time", async () => {
+		const off = await load(`mode: off\n${yaml}`);
+		const on = await load(yaml);
+		const steps: [string, Partial<Snapshot>, Config?][] = [
 			["draft", { draft: false }],
+			["skipped_author", { author: "alice" }],
 			["non_default_base", { baseRef: "main" }],
 			["skip_branch", { headRef: "fix/x" }],
-			["castellan_config", { files: [file(".github/a.yml", 500)] }],
-			["github_dir", { files: [file("src/a.ts", 500)] }],
-			["check_failing", { checks: [{ name: "ci", conclusion: "success" }] }],
+			["mode_off", {}, on],
+			[
+				"castellan_config",
+				files(
+					"CODEOWNERS",
+					".github/a.yml",
+					"src/auth/t.ts",
+					"src/core/x.ts",
+					"migrations/1.sql",
+				),
+			],
+			[
+				"codeowners_file",
+				files(
+					".github/a.yml",
+					"src/auth/t.ts",
+					"src/core/x.ts",
+					"migrations/1.sql",
+				),
+			],
+			[
+				"github_dir",
+				files("src/auth/t.ts", "src/core/x.ts", "migrations/1.sql"),
+			],
+			["protected_path", files("src/core/x.ts", "migrations/1.sql")],
+			["protected_owner", { files: [file("migrations/1.sql", 200)] }],
+			[
+				"check_failing",
+				{
+					checks: [
+						{ name: "ci", conclusion: "success" },
+						{ name: "lint", conclusion: "pending" },
+					],
+				},
+			],
+			["check_pending", { checks: [{ name: "ci", conclusion: "success" }] }],
+			["required_check", { checks: green }],
 			["coderabbit", { codeRabbit: null }],
-			["max_lines", { files: [file("src/a.ts", 1)] }],
+			[
+				"max_lines",
+				files(..."123456".split("").map((n) => `migrations/${n}.sql`)),
+			],
+			["max_files", files("migrations/1.sql", "a/x.ts", "b/y.ts")],
+			["max_dirs", files("migrations/1.sql")],
+			["diff_truncated", { diffTruncated: false }],
+			["migration", files("pnpm-lock.yaml")],
+			["generated_only", files("src/a.ts")],
 			["human_changes_requested", { reviews: [] }],
+			["body_truncated", { bodyTruncated: false }],
 			["stacked", { body: "" }],
 			["author_class", { authorClass: "maintainer" }],
 		];
+		expect(steps.map(([rule]) => rule)).toEqual(RULE_IDS);
 		let s = everything;
-		for (const [rule, fix] of steps) {
-			expect(rulesOf(run(s))[0]).toBe(rule);
+		let c = off;
+		for (const [rule, fix, next] of steps) {
+			expect(rulesOf(run(s, c, required, x))[0]).toBe(rule);
 			s = { ...s, ...fix };
+			c = next ?? c;
 		}
-		expect(run(s).outcome).toBe("candidate");
+		expect(run(s, c, required, x).outcome).toBe("candidate");
 	});
 
 	it("mode off comes after the other skip rules and before escalation", async () => {
