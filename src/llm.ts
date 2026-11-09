@@ -145,14 +145,17 @@ function buildUserMessage(i: ReviewInput): string {
 	return `Boundary: ${boundary}${note}\n\n${blocks.join("\n\n")}`;
 }
 
-function makeClient(config: Config, apiKey?: string): MessagesClient | null {
+export function makeClient(
+	config: Config,
+	apiKey?: string,
+): MessagesClient | null {
 	// apiKey: null keeps AWS_BEARER_TOKEN_BEDROCK out; only the SigV4 chain is used.
 	if (config.llm.provider === "bedrock")
 		return new AnthropicBedrock({ apiKey: null });
 	return apiKey ? new Anthropic({ apiKey }) : null;
 }
 
-function classify(e: unknown): FailureReason {
+export function classify(e: unknown): FailureReason {
 	const name = (e as { constructor?: { name?: string } }).constructor?.name;
 	return name === "APIConnectionTimeoutError" || /timed out/i.test(String(e))
 		? "timeout"

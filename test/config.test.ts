@@ -15,7 +15,7 @@ paths: { protected: ["src/auth/**"], release: [".github/**"] }
 teams: { maintainers: org/maint, protected: org/sec }
 trustedAuthors: [klubrake]
 labels: { needsTriage: triage, bug: defect }
-project: { statusField: S, priorityField: P, sizeField: Z, roadmapField: R }
+project: { name: Board, statusField: S, priorityField: P, sizeField: Z, roadmapField: R }
 llm: { provider: anthropic }
 models: { review: m1, triage: m2 }
 prompt: { base: be strict, guidance: ["no em dashes"] }
@@ -43,6 +43,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 				mode: "shadow",
 				limits: { maxLines: 100, maxFiles: 2, maxTopLevelDirs: 2 },
 				labels: { bug: "bug" },
+				project: { name: "Agent of Empires" },
 				trustedAuthors: ["a"],
 			},
 		});

@@ -44,6 +44,7 @@ const base = z.strictObject({
 		.prefault({}),
 	project: z
 		.strictObject({
+			name: z.string().default("Agent of Empires"),
 			statusField: z.string().default("Status"),
 			priorityField: z.string().default("Priority"),
 			sizeField: z.string().default("Size"),
