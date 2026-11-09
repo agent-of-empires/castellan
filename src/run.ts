@@ -296,8 +296,8 @@ export async function sweep(deps: RunDeps): Promise<Item[]> {
 }
 
 /**
- * Reads pass through; every write is swallowed and its comment body handed to
- * `print`. Forces `shadow`, so nothing can approve or queue a merge either.
+ * Reads pass through; every REST write is swallowed and its comment body handed to
+ * `print`, and any GraphQL mutation throws. Also forces `shadow`.
  */
 export function dryRun(deps: RunDeps, print: (body: string) => void): RunDeps {
 	const { transport } = deps;
@@ -314,7 +314,12 @@ export function dryRun(deps: RunDeps, print: (body: string) => void): RunDeps {
 		transport: {
 			request: request as unknown as GithubTransport["request"],
 			paginate: transport.paginate,
-			graphql: transport.graphql,
+			graphql: ((query: string, variables?: Record<string, unknown>) => {
+				if (/^\s*mutation\b/.test(query)) {
+					throw new Error("dry run refuses GraphQL mutations");
+				}
+				return transport.graphql(query, variables);
+			}) as GithubTransport["graphql"],
 		},
 	};
 }

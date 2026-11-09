@@ -11,11 +11,10 @@ import {
 	runForIssue,
 	runForPr,
 } from "../run.js";
-import { resolveAuth } from "./auth.js";
+import { type AuthInput, parseMode, resolveAuth } from "./auth.js";
 
-const USAGE =
+export const USAGE =
 	"usage: castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]";
-const MODES = ["off", "shadow", "enforce"];
 
 export interface CliArgs {
 	repo: { owner: string; repo: string };
@@ -47,15 +46,12 @@ export function parseCli(argv: string[]): CliArgs {
 	) {
 		throw new Error(USAGE);
 	}
-	if (values.mode !== undefined && !MODES.includes(values.mode)) {
-		throw new Error(`--mode must be one of ${MODES.join(", ")}`);
-	}
 	return {
 		repo: { owner, repo },
 		number,
 		issue: values.issue ?? false,
 		dryRun: values["dry-run"] ?? false,
-		mode: values.mode as Config["mode"] | undefined,
+		mode: parseMode(values.mode, "--mode"),
 	};
 }
 
@@ -79,25 +75,42 @@ export async function execute(
 	return failed(item) ? 1 : 0;
 }
 
-async function main() {
-	const args = parseCli(process.argv.slice(2));
-	const env = process.env;
-	const auth = await resolveAuth({
+export function authFromEnv(env: NodeJS.ProcessEnv): AuthInput {
+	return {
 		token: env.GITHUB_TOKEN,
 		appId: env.CASTELLAN_APP_ID,
 		installationId: env.CASTELLAN_INSTALLATION_ID,
 		privateKey: env.CASTELLAN_PRIVATE_KEY,
 		botLogin: env.CASTELLAN_BOT_LOGIN,
-	});
-	process.exitCode = await execute(args, {
-		...auth,
-		llm: { apiKey: env.ANTHROPIC_API_KEY },
-	});
+	};
+}
+
+/** Returns the exit code. Help and bad arguments are handled before any credential is read. */
+export async function cli(
+	argv: string[],
+	env: NodeJS.ProcessEnv,
+	print: (text: string) => void = console.log,
+): Promise<number> {
+	if (argv.includes("--help") || argv.includes("-h")) {
+		print(USAGE);
+		return 0;
+	}
+	const args = parseCli(argv);
+	const auth = await resolveAuth(authFromEnv(env));
+	return execute(
+		args,
+		{ ...auth, llm: { apiKey: env.ANTHROPIC_API_KEY } },
+		print,
+	);
 }
 
 if (realpathSync(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-	main().catch((e) => {
-		console.error(e instanceof Error ? e.message : e);
-		process.exit(1);
-	});
+	cli(process.argv.slice(2), process.env)
+		.then((code) => {
+			process.exitCode = code;
+		})
+		.catch((e) => {
+			console.error(e instanceof Error ? e.message : e);
+			process.exit(1);
+		});
 }
