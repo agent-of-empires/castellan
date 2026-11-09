@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/agent-of-empires/castellan/compare/v0.3.3...v0.4.0) (2026-11-09)
+
+
+### Features
+
+* **lambda:** CASTELLAN_REPOS accepts owner/* to cover a whole org ([#98](https://github.com/agent-of-empires/castellan/issues/98)) ([615565c](https://github.com/agent-of-empires/castellan/commit/615565cff6653f042e592f4848280c1eb8c8fa90))
+
 ## [0.3.3](https://github.com/agent-of-empires/castellan/compare/v0.3.2...v0.3.3) (2026-11-09)
 
 
