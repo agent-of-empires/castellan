@@ -244,6 +244,39 @@ describe("guards", () => {
 		).rejects.toThrow(/406/);
 	});
 
+	it("treats a 406 too_large diff as an empty truncated diff", async () => {
+		const { transport, request } = fixture();
+		const impl = request.getMockImplementation();
+		request.mockImplementation(async (route, params) => {
+			if (params.mediaType) {
+				throw Object.assign(new Error("too large"), {
+					status: 406,
+					response: {
+						data: { errors: [{ field: "diff", code: "too_large" }] },
+					},
+				});
+			}
+			return (impl as NonNullable<typeof impl>)(route, params);
+		});
+		const s = await buildSnapshot(transport, repo, 7, "maintainer");
+		expect(s.diff).toBe("");
+		expect(s.diffTruncated).toBe(true);
+	});
+
+	it("still throws when the diff request fails with another status", async () => {
+		const { transport, request } = fixture();
+		const impl = request.getMockImplementation();
+		request.mockImplementation(async (route, params) => {
+			if (params.mediaType) {
+				throw Object.assign(new Error("boom"), { status: 500 });
+			}
+			return (impl as NonNullable<typeof impl>)(route, params);
+		});
+		await expect(
+			buildSnapshot(transport, repo, 7, "maintainer"),
+		).rejects.toThrow(/boom/);
+	});
+
 	it("fails closed when a paginated fetch is rejected", async () => {
 		const { transport, paginate } = fixture();
 		paginate.mockRejectedValue(new Error("502"));

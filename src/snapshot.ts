@@ -50,6 +50,18 @@ function linkedIssues(body: string): number[] {
 	return [...new Set(nums)];
 }
 
+/** GitHub answers 406 `too_large` when a PR diff exceeds 20000 lines. */
+function isDiffTooLarge(err: unknown): boolean {
+	const e = err as {
+		status?: number;
+		response?: { data?: { errors?: { code?: string }[] } };
+	};
+	return (
+		e.status === 406 &&
+		!!e.response?.data?.errors?.some((x) => x.code === "too_large")
+	);
+}
+
 /**
  * Text-only view of a PR for the rules and the model. Nothing is checked out.
  * Labels and comments are never fetched, so castellan-set labels and human
@@ -72,10 +84,15 @@ export async function buildSnapshot(
 	}
 	const headSha = pr.head.sha;
 	const [{ data: diff }, files, reviews, checks] = await Promise.all([
-		transport.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
-			...pull,
-			mediaType: { format: "diff" },
-		}),
+		transport
+			.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+				...pull,
+				mediaType: { format: "diff" },
+			})
+			.catch((err: unknown) => {
+				if (isDiffTooLarge(err)) return { data: undefined };
+				throw err;
+			}),
 		transport.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
 			...pull,
 			per_page: 100,
@@ -103,8 +120,12 @@ export async function buildSnapshot(
 	}));
 	const fullBody = pr.body ?? "";
 	const body = cap(fullBody, BODY_CAP);
-	// the diff media type makes `data` a string, which the typings do not know
-	const diffText = cap(diff as unknown as string, DIFF_CAP);
+	// the diff media type makes `data` a string, which the typings do not know;
+	// undefined means GitHub refused to render the diff, so treat it as truncated
+	const diffText =
+		diff === undefined
+			? { text: "", truncated: true }
+			: cap(diff as unknown as string, DIFF_CAP);
 	return {
 		title: pr.title,
 		body: body.text,
