@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/agent-of-empires/castellan/compare/v0.3.0...v0.3.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **pipeline:** read policy and codeowners at the base branch ref ([#86](https://github.com/agent-of-empires/castellan/issues/86)) ([7a802c2](https://github.com/agent-of-empires/castellan/commit/7a802c298d31fe4dcb9bf31d790f35f382656241))
+* **triage:** accept extra keys in the model's reasons object ([#89](https://github.com/agent-of-empires/castellan/issues/89)) ([77ed77b](https://github.com/agent-of-empires/castellan/commit/77ed77b011bfcf7c3101a08f051ce909e041c54c))
+
 ## [0.3.0](https://github.com/agent-of-empires/castellan/compare/v0.2.1...v0.3.0) (2026-11-09)
 
 
