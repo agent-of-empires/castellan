@@ -4,10 +4,14 @@ import { parse } from "yaml";
 import { loadConfig } from "../src/config.js";
 import type { GithubTransport } from "../src/github.js";
 import type { MessagesClient } from "../src/llm.js";
-import { triage } from "../src/triage.js";
+import { escapeText, triage } from "../src/triage.js";
 
 const repo = { owner: "org", repo: "r" };
 const issue = { number: 7, title: "Crash on start", body: "boom" };
+const LABELS = "POST /repos/{owner}/{repo}/issues/{issue_number}/labels";
+const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
+const REMOVE =
+	"DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}";
 
 async function cfg(yaml: string) {
 	const r = await loadConfig("main", async () => yaml);
@@ -27,13 +31,9 @@ const answer = {
 function llm(out: unknown | Error) {
 	const create = vi.fn(async (_p: unknown, _o?: unknown) => {
 		if (out instanceof Error) throw out;
+		const text = typeof out === "string" ? out : JSON.stringify(out);
 		return {
-			content: [
-				{
-					type: "text",
-					text: typeof out === "string" ? out : JSON.stringify(out),
-				},
-			],
+			content: [{ type: "text", text }],
 			usage: { input_tokens: 1, output_tokens: 1 },
 		};
 	});
@@ -55,25 +55,37 @@ const project = {
 	fields: {
 		nodes: [
 			field("fs", "Status", ["Ready", "Backlog"]),
-			field("fp", "Priority", ["P0", "P1", "P2"]),
+			field("fp", "Priority", ["P0", "P1", "P2", "P3"]),
 			field("fz", "Size", ["XS", "S", "M", "L", "XL"]),
-			field("fr", "Roadmap", ["📋 Planned", "💡 Future / Exploring"]),
+			field("fr", "Roadmap state", ["📋 Planned", "💡 Future / Exploring"]),
 		],
 	},
 };
+
+const REPO_LABELS = [
+	"P0",
+	"P1",
+	"P2",
+	"P3",
+	"area:core",
+	"area:web",
+	"bug",
+	"enhancement",
+];
 
 function world(
 	opts: {
 		labels?: string[];
 		items?: { id: string; project: { id: string }; fieldValues: unknown }[];
 		project?: typeof project | null;
+		repoLabels?: string[];
+		pageSize?: number;
+		failSet?: boolean;
 	} = {},
 ) {
+	const log: string[] = [];
 	const state = {
 		repository: {
-			labels: {
-				nodes: ["area:core", "area:web", "bug", "P1"].map((name) => ({ name })),
-			},
 			issue: {
 				id: "ISSUE",
 				labels: {
@@ -88,17 +100,43 @@ function world(
 			},
 		},
 	};
-	const graphql = vi.fn(async (q: string, _v?: unknown) =>
-		q.includes("addProjectV2ItemById")
-			? { addProjectV2ItemById: { item: { id: "NEW" } } }
-			: q.includes("updateProjectV2ItemFieldValue")
-				? {}
-				: state,
-	);
-	const request = vi.fn(async (_r: string, _p?: unknown) => ({ data: {} }));
+	const all = opts.repoLabels ?? REPO_LABELS;
+	const size = opts.pageSize ?? 100;
+	const graphql = vi.fn(async (q: string, v?: unknown) => {
+		if (q.includes("addProjectV2ItemById")) {
+			log.push("add-item");
+			return { addProjectV2ItemById: { item: { id: "NEW" } } };
+		}
+		if (q.includes("updateProjectV2ItemFieldValue")) {
+			if (opts.failSet) throw new Error("boom");
+			log.push("set-field");
+			return {};
+		}
+		if (q.includes("pageInfo")) {
+			const start = Number((v as { after: string | null }).after ?? 0);
+			const end = start + size;
+			return {
+				repository: {
+					labels: {
+						nodes: all.slice(start, end).map((name) => ({ name })),
+						pageInfo: {
+							hasNextPage: end < all.length,
+							endCursor: String(end),
+						},
+					},
+				},
+			};
+		}
+		return state;
+	});
+	const request = vi.fn(async (route: string, _p?: unknown) => {
+		log.push(route);
+		return { data: {} };
+	});
 	return {
 		graphql,
 		request,
+		log,
 		transport: { graphql, request } as unknown as GithubTransport,
 	};
 }
@@ -113,27 +151,40 @@ const routes = (r: ReturnType<typeof world>["request"]) =>
 
 const commentBody = (r: ReturnType<typeof world>["request"]) =>
 	r.mock.calls
-		.filter(([route]) => route.endsWith("/comments"))
+		.filter(([route]) => route === COMMENT)
 		.map(([, p]) => (p as { body: string }).body)
 		.join("\n");
+
+function nothingWritten(w: ReturnType<typeof world>) {
+	expect(w.request).not.toHaveBeenCalled();
+	expect(sets(w.graphql)).toEqual([]);
+	expect(w.log).toEqual([]);
+}
+
+const run = async (
+	w: ReturnType<typeof world>,
+	yaml: string,
+	out: unknown = answer,
+) => {
+	const m = llm(out);
+	const r = await triage(issue, await cfg(yaml), w.transport, repo, {
+		client: m.client,
+	});
+	return { r, m };
+};
 
 describe("triage", () => {
 	it("does nothing when off", async () => {
 		const w = world();
-		const m = llm(answer);
-		const r = await triage(issue, await cfg("mode: off"), w.transport, repo, {
-			client: m.client,
-		});
-		expect(r).toEqual({ ok: true, mode: "off" });
+		const { r, m } = await run(w, "mode: off");
+		expect(r).toEqual({ ok: true, skipped: "off" });
 		expect(w.graphql).not.toHaveBeenCalled();
 		expect(m.create).not.toHaveBeenCalled();
 	});
 
-	it("shadow only comments the proposal", async () => {
+	it("shadow only comments the proposal and says fit is not set", async () => {
 		const w = world();
-		const r = await triage(issue, await cfg(""), w.transport, repo, {
-			client: llm(answer).client,
-		});
+		const { r } = await run(w, "");
 		expect(r).toMatchObject({
 			ok: true,
 			mode: "shadow",
@@ -146,24 +197,24 @@ describe("triage", () => {
 				],
 			},
 		});
-		expect(routes(w.request)).toEqual([
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-		]);
+		expect(routes(w.request)).toEqual([COMMENT]);
 		const body = commentBody(w.request);
 		expect(body).toContain("Proposed:");
 		expect(body).toContain("`ready-for-agent`");
-		expect(body).not.toContain("Fit");
+		expect(body).toContain("Fit is not set by triage");
 	});
 
-	it("enforce applies labels, fields, removes needs-triage and keeps ready-for-agent comment only", async () => {
+	it("enforce writes labels and fields, comments, and removes needs-triage last", async () => {
 		const w = world();
-		await triage(issue, await cfg("mode: enforce"), w.transport, repo, {
-			client: llm(answer).client,
-		});
-		expect(routes(w.request)).toEqual([
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
-			"DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}",
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+		await run(w, "mode: enforce");
+		expect(w.log).toEqual([
+			LABELS,
+			"add-item",
+			"set-field",
+			"set-field",
+			"set-field",
+			COMMENT,
+			REMOVE,
 		]);
 		expect(w.request.mock.calls[0]?.[1]).toMatchObject({
 			labels: ["P1", "area:core", "bug"],
@@ -173,9 +224,14 @@ describe("triage", () => {
 			{ project: "PRJ", item: "NEW", field: "fz", option: "fz:M" },
 			{ project: "PRJ", item: "NEW", field: "fs", option: "fs:Ready" },
 		]);
-		const body = commentBody(w.request);
-		expect(body).toContain("Applied:");
-		expect(body).not.toContain("Fit:");
+		expect(commentBody(w.request)).toContain("Applied:");
+		expect(routes(w.request)).not.toContain("ready-for-agent");
+	});
+
+	it("keeps needs-triage when a write fails", async () => {
+		const w = world({ failSet: true });
+		await expect(run(w, "mode: enforce")).rejects.toThrow("boom");
+		expect(routes(w.request)).not.toContain(REMOVE);
 	});
 
 	it("never overwrites existing labels or project fields", async () => {
@@ -187,7 +243,6 @@ describe("triage", () => {
 					project: { id: "PRJ" },
 					fieldValues: {
 						nodes: [
-							{ name: "M", field: { name: "Size" } },
 							{ name: "Ready", field: { name: "Status" } },
 							{ name: "P0", field: { name: "Priority" } },
 						],
@@ -195,34 +250,22 @@ describe("triage", () => {
 				},
 			],
 		});
-		const r = await triage(
-			issue,
-			await cfg("mode: enforce"),
-			w.transport,
-			repo,
-			{
-				client: llm(answer).client,
-			},
-		);
-		expect(r).toMatchObject({ proposal: { labels: [], fields: [] } });
-		expect(routes(w.request)).toEqual([
-			"DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}",
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+		const { r } = await run(w, "mode: enforce");
+		expect(r).toMatchObject({
+			proposal: { labels: [], fields: [{ field: "Size", option: "M" }] },
+		});
+		expect(routes(w.request)).toEqual([COMMENT, REMOVE]);
+		expect(sets(w.graphql)).toEqual([
+			{ project: "PRJ", item: "IT", field: "fz", option: "fz:M" },
 		]);
-		expect(sets(w.graphql)).toEqual([]);
 	});
 
 	it("derives Status from the existing priority and sets Roadmap for features only", async () => {
 		const feature = { ...answer, type: "feature", priority: "P0" };
-		const w = world({ labels: ["P2"] });
-		const r = await triage(
-			issue,
-			await cfg("mode: enforce"),
-			w.transport,
-			repo,
-			{
-				client: llm(feature).client,
-			},
+		const { r } = await run(
+			world({ labels: ["needs-triage", "P2"] }),
+			"mode: enforce",
+			feature,
 		);
 		expect(r).toMatchObject({
 			proposal: {
@@ -231,58 +274,175 @@ describe("triage", () => {
 					{ field: "Priority", option: "P2" },
 					{ field: "Size", option: "M" },
 					{ field: "Status", option: "Backlog" },
-					{ field: "Roadmap", option: "💡 Future / Exploring" },
+					{ field: "Roadmap state", option: "💡 Future / Exploring" },
 				],
 			},
 		});
-		const bug = world({ labels: [] });
-		const rb = await triage(
-			issue,
-			await cfg("mode: enforce"),
-			bug.transport,
-			repo,
-			{
-				client: llm(answer).client,
-			},
-		);
-		expect(JSON.stringify(rb)).not.toContain("Roadmap");
+		const bug = await run(world(), "mode: enforce");
+		expect(JSON.stringify(bug.r)).not.toContain("Roadmap");
 	});
 
-	it("resolves ids by configured names and reports unknown options", async () => {
-		const w = world({
-			project: {
-				...project,
-				fields: { nodes: [field("fp", "Prio", ["P1"])] },
+	it("maps the default P3 to Backlog", async () => {
+		const { r } = await run(world(), "", { ...answer, priority: "P3" });
+		expect(r).toMatchObject({
+			proposal: {
+				labels: ["P3", "area:core", "bug"],
+				fields: [
+					{ field: "Priority", option: "P3" },
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Backlog" },
+				],
 			},
 		});
-		const config = await cfg("mode: enforce\nproject: { priorityField: Prio }");
-		await triage(issue, config, w.transport, repo, {
-			client: llm(answer).client,
+	});
+
+	it("takes priorities, status and roadmap names from config", async () => {
+		const w = world({
+			repoLabels: ["urgent", "later", "area:core", "bug", "enhancement"],
+			project: {
+				...project,
+				fields: {
+					nodes: [
+						field("fs", "Status", ["Now", "Next"]),
+						field("fp", "Priority", ["urgent", "later"]),
+						field("fz", "Size", ["M"]),
+						field("fr", "Roadmap state", ["Soon"]),
+					],
+				},
+			},
 		});
-		expect(sets(w.graphql)).toEqual([
-			{ project: "PRJ", item: "NEW", field: "fp", option: "fp:P1" },
-		]);
-		const body = commentBody(w.request);
-		expect(body).toContain("Size: M (not found on the project)");
+		const { r, m } = await run(
+			w,
+			`triage:
+  priority_labels: [urgent, later]
+  status_by_priority: { urgent: Now, later: Next }
+  roadmap_by_status: { Now: Soon, Next: Soon }`,
+			{ ...answer, priority: "urgent", type: "feature" },
+		);
+		expect(r).toMatchObject({
+			proposal: {
+				fields: [
+					{ field: "Priority", option: "urgent" },
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Now" },
+					{ field: "Roadmap state", option: "Soon" },
+				],
+			},
+		});
+		const p = m.create.mock.calls[0]?.[0] as { system: string };
+		expect(p.system).toContain("urgent, later");
+	});
+
+	it("is a no-op without needs-triage or when nothing is missing", async () => {
+		const done = {
+			id: "IT",
+			project: { id: "PRJ" },
+			fieldValues: {
+				nodes: ["Status", "Priority", "Size"].map((n) => ({
+					name: "x",
+					field: { name: n },
+				})),
+			},
+		};
+		const absent = world({ labels: ["P1", "area:core", "bug"] });
+		const a = await run(absent, "mode: enforce");
+		expect(a.r).toEqual({ ok: true, skipped: "no needs-triage label" });
+		expect(a.m.create).not.toHaveBeenCalled();
+		nothingWritten(absent);
+
+		const full = ["needs-triage", "P1", "area:core", "bug"];
+		const shadow = world({ labels: full, items: [done] });
+		const s = await run(shadow, "");
+		expect(s.r).toEqual({ ok: true, skipped: "nothing missing" });
+		expect(s.m.create).not.toHaveBeenCalled();
+		nothingWritten(shadow);
+
+		const enforce = world({ labels: full, items: [done] });
+		const e = await run(enforce, "mode: enforce");
+		expect(e.r).toEqual({ ok: true, skipped: "nothing missing" });
+		expect(e.m.create).not.toHaveBeenCalled();
+		expect(routes(enforce.request)).toEqual([REMOVE]);
+	});
+
+	it("fails closed when the project is not found, writing nothing", async () => {
+		const w = world({ project: null });
+		const { r, m } = await run(w, "mode: enforce");
+		expect(r).toEqual({
+			ok: false,
+			error: "unresolved",
+			detail: "project not found: Agent of Empires",
+		});
+		expect(m.create).not.toHaveBeenCalled();
+		nothingWritten(w);
+	});
+
+	it("fails closed on an unknown option or field, writing nothing", async () => {
+		const noOption = world({
+			project: {
+				...project,
+				fields: {
+					nodes: [
+						field("fs", "Status", ["Ready", "Backlog"]),
+						field("fp", "Priority", ["P0", "P1", "P2", "P3"]),
+						field("fz", "Size", ["XS"]),
+					],
+				},
+			},
+		});
+		const a = await run(noOption, "mode: enforce");
+		expect(a.r).toEqual({
+			ok: false,
+			error: "unresolved",
+			detail: "option not found: Size = M",
+		});
+		nothingWritten(noOption);
+
+		const noField = world();
+		const b = await run(
+			noField,
+			"mode: enforce\nproject: { sizeField: Effort }",
+		);
+		expect(b.r).toEqual({
+			ok: false,
+			error: "unresolved",
+			detail: "field not found: Effort",
+		});
+		nothingWritten(noField);
 	});
 
 	it.each([
 		["prose", "nope"],
 		["unknown area", { ...answer, area: "area:nope" }],
-		["bad priority", { ...answer, priority: "P9" }],
-	])("fails closed on %s and writes nothing", async (_n, out) => {
-		const w = world();
-		const r = await triage(
-			issue,
-			await cfg("mode: enforce"),
-			w.transport,
-			repo,
-			{
-				client: llm(out).client,
-			},
-		);
+		["unconfigured priority", { ...answer, priority: "P9" }],
+		["priority missing in the repo", { ...answer, priority: "P3" }],
+		["bad size", { ...answer, size: "HUGE" }],
+	])("fails closed on %s and writes nothing", async (name, out) => {
+		const w = world({
+			repoLabels:
+				name === "priority missing in the repo"
+					? REPO_LABELS.filter((l) => l !== "P3")
+					: REPO_LABELS,
+		});
+		const { r } = await run(w, "mode: enforce", out);
 		expect(r).toMatchObject({ ok: false, error: "invalid_output" });
-		expect(w.request).not.toHaveBeenCalled();
+		nothingWritten(w);
+	});
+
+	it("rejects a type whose label is missing in the repo", async () => {
+		const w = world({ repoLabels: REPO_LABELS.filter((l) => l !== "bug") });
+		const { r } = await run(w, "mode: enforce");
+		expect(r).toMatchObject({ ok: false, error: "invalid_output" });
+		nothingWritten(w);
+	});
+
+	it("reads every page of repo labels", async () => {
+		const w = world({ pageSize: 2 });
+		const { r, m } = await run(w, "");
+		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		const p = m.create.mock.calls[0]?.[0] as { system: string };
+		expect(p.system).toContain("area:core, area:web");
+		const pages = w.graphql.mock.calls.filter(([q]) => q.includes("pageInfo"));
+		expect(pages).toHaveLength(4);
 	});
 
 	it("fails closed on sdk errors and a missing key", async () => {
@@ -297,22 +457,60 @@ describe("triage", () => {
 			ok: false,
 			error: "missing_key",
 		});
-		expect(w.request).not.toHaveBeenCalled();
+		nothingWritten(w);
 	});
 
-	it("puts the issue text behind a boundary and uses the triage model", async () => {
+	it("goes through the shared client path: boundary, caps and budget", async () => {
 		const m = llm(answer);
-		await triage(issue, await cfg(""), world().transport, repo, {
-			client: m.client,
-		});
+		await triage(
+			{ ...issue, body: "x".repeat(4000) },
+			await cfg(""),
+			world().transport,
+			repo,
+			{ client: m.client },
+		);
 		const p = m.create.mock.calls[0]?.[0] as {
 			model: string;
-			system: string;
 			messages: { content: string }[];
 		};
 		expect(p.model).toBe("us.anthropic.claude-haiku-5-5");
-		expect(p.system).toContain("area:core, area:web");
-		expect(p.messages[0]?.content).toMatch(/BEGIN title [0-9a-f]{32}\nCrash/);
+		const user = p.messages[0]?.content ?? "";
+		expect(user).toMatch(/BEGIN title [0-9a-f]{32}\nCrash/);
+		expect(user).toContain("These fields were truncated: body.");
+
+		const w = world();
+		const budget = await triage(issue, await cfg(""), w.transport, repo, {
+			client: llm(answer).client,
+			maxCostUsd: 0,
+		});
+		expect(budget).toMatchObject({ ok: false, error: "budget" });
+		nothingWritten(w);
+	});
+
+	it("escapes mentions and links from model text in the comment", async () => {
+		const w = world();
+		await run(w, "", {
+			...answer,
+			readyForAgent: {
+				suggest: true,
+				reason:
+					"ping @bob [click](https://evil.example/x) or https://evil.example",
+			},
+			reasons: { ...answer.reasons, size: "see @org/team\nnow" },
+		});
+		const body = commentBody(w.request);
+		expect(body).not.toMatch(/@\w/);
+		expect(body).not.toContain("http");
+		expect(body).toContain("ping bob click or");
+	});
+});
+
+describe("escapeText", () => {
+	it("strips mentions, links and urls", () => {
+		expect(escapeText("hi @a, [t](http://x.y) http://z.w ok")).toBe(
+			"hi a, t ok",
+		);
+		expect(escapeText("mail a@b.com")).toBe("mail a@b.com");
 	});
 });
 

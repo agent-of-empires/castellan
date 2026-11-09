@@ -82,12 +82,12 @@ export interface LlmDeps {
 /** Bump on any change to DEFAULT_BASE, FORMAT or the message layout; it invalidates cached verdicts. */
 export const PROMPT_VERSION = "1";
 
-const CAPS = {
+const CAPS: Record<string, number> = {
 	body: 3000,
 	diff: 30_000,
 	reviewerSummary: 800,
 	linkedIssueBody: 3000,
-} as const;
+};
 
 const DEFAULT_BASE =
 	"You review a pull request for a merge gate. Decide whether the change matches the linked issue and the PR description, and whether it adds behavior beyond what was asked.";
@@ -104,36 +104,31 @@ export function buildSystemPrompt({ prompt }: Config): string {
 
 /** Cache key component for the verdict cache: changes when the prompt or model does. */
 export function promptHash({ prompt, models }: Config): string {
-	return createHash("sha256")
-		.update(
-			JSON.stringify([
-				prompt.base ?? DEFAULT_BASE,
-				prompt.guidance,
-				models.review,
-				PROMPT_VERSION,
-			]),
-		)
-		.digest("hex");
+	return hashOf([
+		prompt.base ?? DEFAULT_BASE,
+		prompt.guidance,
+		models.review,
+		PROMPT_VERSION,
+	]);
 }
 
-function buildUserMessage(i: ReviewInput): string {
+export function hashOf(parts: unknown[]): string {
+	return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+function buildUserMessage(fields: [string, string | undefined][]): string {
 	const boundary = randomBytes(16).toString("hex");
 	const truncated: string[] = [];
-	const cap = (name: keyof typeof CAPS, text: string | undefined) => {
-		if (text && text.length > CAPS[name]) {
+	const cap = (name: string, text: string | undefined) => {
+		const limit = CAPS[name];
+		if (text && limit !== undefined && text.length > limit) {
 			truncated.push(name);
-			return text.slice(0, CAPS[name]);
+			return text.slice(0, limit);
 		}
 		return text;
 	};
-	const fields: [string, string | undefined][] = [
-		["title", i.title],
-		["body", cap("body", i.body)],
-		["linkedIssueBody", cap("linkedIssueBody", i.linkedIssueBody)],
-		["reviewerSummary", cap("reviewerSummary", i.reviewerSummary)],
-		["diff", cap("diff", i.diff)],
-	];
 	const blocks = fields
+		.map(([name, text]) => [name, cap(name, text)] as const)
 		.filter(([, text]) => text)
 		.map(
 			([name, text]) =>
@@ -145,31 +140,47 @@ function buildUserMessage(i: ReviewInput): string {
 	return `Boundary: ${boundary}${note}\n\n${blocks.join("\n\n")}`;
 }
 
-export function makeClient(
-	config: Config,
-	apiKey?: string,
-): MessagesClient | null {
+function makeClient(config: Config, apiKey?: string): MessagesClient | null {
 	// apiKey: null keeps AWS_BEARER_TOKEN_BEDROCK out; only the SigV4 chain is used.
 	if (config.llm.provider === "bedrock")
 		return new AnthropicBedrock({ apiKey: null });
 	return apiKey ? new Anthropic({ apiKey }) : null;
 }
 
-export function classify(e: unknown): FailureReason {
+function failureReason(e: unknown): FailureReason {
 	const name = (e as { constructor?: { name?: string } }).constructor?.name;
 	return name === "APIConnectionTimeoutError" || /timed out/i.test(String(e))
 		? "timeout"
 		: "sdk_error";
 }
 
+export interface JsonCall<T> {
+	system: string;
+	/** Named untrusted fields, put behind random boundaries and capped by name. */
+	fields: [string, string | undefined][];
+	model: string;
+	schema: z.ZodType<T>;
+	promptHash: string;
+}
+
+export type JsonResult<T> =
+	| {
+			ok: true;
+			value: T;
+			usage: { inputTokens: number; outputTokens: number };
+			costUsd: number;
+			promptHash: string;
+	  }
+	| { ok: false; error: FailureReason; detail?: string; promptHash: string };
+
 /** Never throws; every failure is `ok: false`. */
-export async function review(
-	input: ReviewInput,
+export async function callJson<T>(
+	call: JsonCall<T>,
 	config: Config,
 	deps: LlmDeps = {},
-): Promise<ReviewResult> {
-	const hash = promptHash(config);
-	const fail = (error: FailureReason, detail?: string): ReviewResult => ({
+): Promise<JsonResult<T>> {
+	const { model, system, promptHash: hash } = call;
+	const fail = (error: FailureReason, detail?: string): JsonResult<T> => ({
 		ok: false,
 		error,
 		detail,
@@ -179,12 +190,10 @@ export async function review(
 		const client = deps.client ?? makeClient(config, deps.apiKey);
 		if (!client) return fail("missing_key");
 
-		const model = config.models.review;
 		const price = { ...DEFAULT_PRICES, ...deps.prices }[model];
 		if (!price) return fail("budget", `no price for model ${model}`);
 
-		const system = buildSystemPrompt(config);
-		const user = buildUserMessage(input);
+		const user = buildUserMessage(call.fields);
 		if (deps.maxCostUsd !== undefined) {
 			const estimate =
 				(((system.length + user.length) / 4) * price.input) / 1e6;
@@ -206,9 +215,9 @@ export async function review(
 			.flatMap((b) => (b.type === "text" ? [b.text] : []))
 			.join("");
 		const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-		let parsed: ReturnType<typeof verdictSchema.safeParse>;
+		let parsed: ReturnType<typeof call.schema.safeParse>;
 		try {
-			parsed = verdictSchema.safeParse(JSON.parse(json));
+			parsed = call.schema.safeParse(JSON.parse(json));
 		} catch (e) {
 			return fail("invalid_output", String(e));
 		}
@@ -219,12 +228,40 @@ export async function review(
 		const outputTokens = message.usage.output_tokens;
 		return {
 			ok: true,
-			verdict: parsed.data,
+			value: parsed.data,
 			usage: { inputTokens, outputTokens },
 			costUsd: (inputTokens * price.input + outputTokens * price.output) / 1e6,
 			promptHash: hash,
 		};
 	} catch (e) {
-		return fail(classify(e), String(e));
+		return fail(failureReason(e), String(e));
 	}
+}
+
+/** Never throws; every failure is `ok: false`. */
+export async function review(
+	input: ReviewInput,
+	config: Config,
+	deps: LlmDeps = {},
+): Promise<ReviewResult> {
+	const r = await callJson(
+		{
+			system: buildSystemPrompt(config),
+			fields: [
+				["title", input.title],
+				["body", input.body],
+				["linkedIssueBody", input.linkedIssueBody],
+				["reviewerSummary", input.reviewerSummary],
+				["diff", input.diff],
+			],
+			model: config.models.review,
+			schema: verdictSchema,
+			promptHash: promptHash(config),
+		},
+		config,
+		deps,
+	);
+	if (!r.ok) return r;
+	const { value, ...rest } = r;
+	return { ...rest, verdict: value };
 }

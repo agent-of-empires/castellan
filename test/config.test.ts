@@ -16,6 +16,7 @@ teams: { maintainers: org/maint, protected: org/sec }
 trustedAuthors: [klubrake]
 labels: { needsTriage: triage, bug: defect }
 project: { name: Board, statusField: S, priorityField: P, sizeField: Z, roadmapField: R }
+triage: { priority_labels: [P0, P1], status_by_priority: { P0: Now, P1: Next }, roadmap_by_status: { Now: Soon } }
 llm: { provider: anthropic }
 models: { review: m1, triage: m2 }
 prompt: { base: be strict, guidance: ["no em dashes"] }
@@ -42,8 +43,12 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 			config: {
 				mode: "shadow",
 				limits: { maxLines: 100, maxFiles: 2, maxTopLevelDirs: 2 },
-				labels: { bug: "bug" },
-				project: { name: "Agent of Empires" },
+				project: { name: "Agent of Empires", roadmapField: "Roadmap state" },
+				triage: {
+					priority_labels: ["P0", "P1", "P2", "P3"],
+					status_by_priority: { P3: "Backlog" },
+				},
+				labels: { feature: "enhancement" },
 				trustedAuthors: ["a"],
 			},
 		});
@@ -58,6 +63,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 		["bad enum", "mode: yolo"],
 		["bad type", "limits: { maxLines: lots }"],
 		["unknown key", "mod: off"],
+		["priority without a status", "triage: { priority_labels: [P0, P9] }"],
 		["not a mapping", "- a\n- b"],
 		["bad yaml", "a: [unclosed"],
 	])("fails closed on %s", async (_name, text) => {

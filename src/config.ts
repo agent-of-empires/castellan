@@ -40,6 +40,7 @@ const base = z.strictObject({
 		.strictObject({
 			needsTriage: z.string().default("needs-triage"),
 			bug: z.string().default("bug"),
+			feature: z.string().default("enhancement"),
 		})
 		.prefault({}),
 	project: z
@@ -48,7 +49,22 @@ const base = z.strictObject({
 			statusField: z.string().default("Status"),
 			priorityField: z.string().default("Priority"),
 			sizeField: z.string().default("Size"),
-			roadmapField: z.string().default("Roadmap"),
+			roadmapField: z.string().default("Roadmap state"),
+		})
+		.prefault({}),
+	triage: z
+		.strictObject({
+			priority_labels: z
+				.array(z.string())
+				.min(1)
+				.default(["P0", "P1", "P2", "P3"]),
+			status_by_priority: z
+				.record(z.string(), z.string())
+				.default({ P0: "Ready", P1: "Ready", P2: "Backlog", P3: "Backlog" }),
+			roadmap_by_status: z.record(z.string(), z.string()).default({
+				Ready: "📋 Planned",
+				Backlog: "💡 Future / Exploring",
+			}),
 		})
 		.prefault({}),
 	llm: z
@@ -92,6 +108,16 @@ const schema = base.transform((c, ctx) => {
 					path: ["models", key],
 				});
 			}
+		}
+	}
+	for (const p of c.triage.priority_labels) {
+		if (!(p in c.triage.status_by_priority)) {
+			ctx.issues.push({
+				code: "custom",
+				message: `triage.status_by_priority has no entry for ${p}`,
+				input: c.triage.status_by_priority,
+				path: ["triage", "status_by_priority"],
+			});
 		}
 	}
 	return { ...c, models };

@@ -9,7 +9,9 @@ model can only veto.
 
 ## Triage
 
-Copy [templates/needs-triage.yml](templates/needs-triage.yml) into `.github/workflows/` to add `needs-triage` on issue open. Castellan then fills only the missing priority, `area:*` and type labels and the project Size, Status, Priority and Roadmap (features only) fields; Fit is never set. Project and option ids are resolved by name at runtime from `project.name` and the `project.*Field` keys in `.castellan.yml`. In `shadow` it comments the proposal; in `enforce` it applies it, removes `needs-triage` and comments the reasons. A `ready-for-agent` suggestion is always comment only.
+Copy [templates/needs-triage.yml](templates/needs-triage.yml) into `.github/workflows/` to add `needs-triage` on issue open. The target repo must have a `needs-triage` label (name set by `labels.needsTriage`); the workflow does not create it.
+
+While `needs-triage` is present, castellan fills only the missing priority, `area:*` and type labels and the project Size, Status, Priority and Roadmap (features only) fields. Fit is never set. Project, field and option ids are resolved by name at runtime. Priority labels, the Status-by-priority table and the Roadmap-by-Status options come from `triage.*` in `.castellan.yml`; the project from `project.name` and `project.*Field`. A name that cannot be found (project, field, option or label) fails closed: nothing is written. In `shadow` it comments the proposal; in `enforce` it applies it, comments the reasons and removes `needs-triage` last. A `ready-for-agent` suggestion is always comment only.
 
 ## Development
 
