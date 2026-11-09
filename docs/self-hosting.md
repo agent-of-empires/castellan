@@ -10,7 +10,7 @@ Castellan runs three ways. All call the same pipeline (`evaluatePull` and `triag
 
 GitHub is the only supported provider today. Everything provider specific sits behind `src/github.ts`; other providers are tracked in [#35](https://github.com/agent-of-empires/castellan/issues/35).
 
-Start in `shadow` (the default). It posts the brief and a status and changes nothing else. Triage can be enforced ahead of the PR gate with `triage.mode: enforce` (see [configuration](configuration.md#triage)).
+Start the PR gate in `shadow` (the default). It posts the brief and a status and approves or merges nothing. Triage has no shadow mode and writes labels and project fields for real as soon as it runs; set `triage.enabled: false` to hold it back while the PR gate is in `shadow` (see [configuration](configuration.md#triage)).
 
 ## AWS Lambda
 
