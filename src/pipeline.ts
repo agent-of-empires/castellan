@@ -19,6 +19,8 @@ export interface Env {
 	/** The App's `<slug>[bot]` login. */
 	login: string;
 	llm?: LlmDeps;
+	/** Overrides `mode` from `.castellan.yml`. */
+	mode?: Config["mode"];
 }
 
 const CODEOWNERS_PATHS = [
@@ -41,13 +43,18 @@ async function repoConfig(env: Env, repoRef: Repo, ref?: string) {
 	});
 	const read = githubReader(env.transport, repoRef);
 	const loaded = await loadConfig(ref ?? data.default_branch, read);
+	const withMode = (config: Config) =>
+		env.mode ? { ...config, mode: env.mode } : config;
 	if (loaded.ok) {
-		return { config: loaded.config, defaultBranch: data.default_branch };
+		return {
+			config: withMode(loaded.config),
+			defaultBranch: data.default_branch,
+		};
 	}
 	const fallback = await loadConfig("", async () => null);
 	if (!fallback.ok) throw new Error(fallback.error);
 	return {
-		config: fallback.config,
+		config: withMode(fallback.config),
 		defaultBranch: data.default_branch,
 		error: loaded.error,
 	};

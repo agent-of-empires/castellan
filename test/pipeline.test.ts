@@ -160,6 +160,27 @@ describe("evaluatePull", () => {
 	});
 });
 
+describe("mode override", () => {
+	it("wins over the config in both directions", async () => {
+		const shadow = world();
+		await evaluatePull({ ...shadow.env, mode: "shadow" }, repo, 3);
+		expect(shadow.routes()).toContain(COMMENT);
+		expect(shadow.routes()).not.toContain(APPROVE);
+
+		const enforce = world({ yaml: "mode: shadow\ntrustedAuthors: [alice]" });
+		await evaluatePull({ ...enforce.env, mode: "enforce" }, repo, 3);
+		expect(enforce.routes()).toContain(APPROVE);
+	});
+
+	it("also applies to the fallback config of an invalid file", async () => {
+		const w = world({ yaml: "mode: nonsense" });
+		const r = await evaluatePull({ ...w.env, mode: "enforce" }, repo, 3);
+		// still escalates (config_invalid), so nothing is approved
+		expect(r).toMatchObject({ status: "acted" });
+		expect(w.routes()).not.toContain(APPROVE);
+	});
+});
+
 describe("mode off", () => {
 	it("exits before the snapshot, team lookup and checks", async () => {
 		const w = world({ yaml: "mode: off\nteams:\n  maintainers: m" });
