@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/agent-of-empires/castellan/compare/v0.2.0...v0.2.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **pipeline:** log the failure detail when a model call fails ([#75](https://github.com/agent-of-empires/castellan/issues/75)) ([36eeb0f](https://github.com/agent-of-empires/castellan/commit/36eeb0f59c920e3f23a1ba0ca0850e2a67fcdfbc))
+* **rules:** wait for CI to settle before posting a brief ([#72](https://github.com/agent-of-empires/castellan/issues/72)) ([127362e](https://github.com/agent-of-empires/castellan/commit/127362ed69eb6f99ca44a5ff390db5bd7d7cde6e))
+* **snapshot:** handle github 406 diff too_large instead of crashing ([#76](https://github.com/agent-of-empires/castellan/issues/76)) ([516fce6](https://github.com/agent-of-empires/castellan/commit/516fce605b915b3d02b0dfbb3553537258a66b90))
+
 ## [0.2.0](https://github.com/agent-of-empires/castellan/compare/v0.1.1...v0.2.0) (2026-11-09)
 
 
