@@ -30,9 +30,9 @@ The source lands on `Env` in `src/pipeline.ts`, so all three adapters inherit it
 | `owner/repo:path` | that repo and path, default branch; `:path` optional (`castellan.yml`) |
 | `s3://bucket/key` | that object                                                            |
 
-The git forms use the App token the pipeline already has (`contents:read`). The unset form is per owner, so one deployment installed on several orgs reads each org's own file.
+The git forms use the App token the pipeline already has (`contents:read`), so the installation must cover the central repo. A deployment holds one installation id (`src/secrets.ts`), so today one deployment serves one org; the unset form is per owner so that a later multi-installation deployment reads each org's own file without a config change.
 
-The central file is read once per invocation per owner and memoized on `Env`. Nothing is cached across invocations, so a merged change applies on the next event or sweep.
+The central file is read once per invocation per owner, memoized in a map the Lambda creates per invocation (not on the container-scoped `Env` that `createHandler` keeps). Nothing is cached across invocations, so a merged change applies on the next event or sweep.
 
 ## Merge rules
 
@@ -83,15 +83,15 @@ In `db` mode the layers are `owner/*` document, then `owner/repo` document, then
 
 One DynamoDB table, `CASTELLAN_TABLE`, string keys `pk` and `sk`.
 
-| Item           | `pk`                                    | `sk`                             | Attributes                                                                                                                     |
-| -------------- | --------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| config version | `config#owner/repo` or `config#owner/*` | `v<N>`                           | `yaml` (the document text), `updatedBy`, `updatedAt`                                                                           |
-| config pointer | same                                    | `current`                        | `version`                                                                                                                      |
-| event          | `repo#owner/repo`                       | `<iso timestamp>#<pr>#<headSha>` | `verdict`, `reasons`, `model`, `inputTokens`, `outputTokens`, `costUsd`, `source` (`llm`, `cache`, `skipped`), `ttl` (90 days) |
+| Item           | `pk`                                    | `sk`                                                              | Attributes                                                                                                                     |
+| -------------- | --------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| config version | `config#owner/repo` or `config#owner/*` | `v<N>`                                                            | `yaml` (the document text), `updatedBy`, `updatedAt`                                                                           |
+| config pointer | same                                    | `current`                                                         | `version`                                                                                                                      |
+| event          | `repo#owner/repo`                       | `<iso timestamp>#pr-<n>#<headSha>` or `<iso timestamp>#issue-<n>` | `verdict`, `reasons`, `model`, `inputTokens`, `outputTokens`, `costUsd`, `source` (`llm`, `cache`, `skipped`), `ttl` (90 days) |
 
 Config documents are stored as YAML text, not decomposed fields, so there is one schema (`src/config.ts`) and one validator for all three sources. Every edit writes a new version and moves `current`; history is free.
 
-Events are written whenever `CASTELLAN_TABLE` is set, independent of the config source. The sticky-comment cache stays the source of truth for review reuse; the table is additive and nothing migrates. Month cost is summed on read over the current calendar month, no counters.
+Events are written whenever `CASTELLAN_TABLE` is set, independent of the config source. Issue triage writes an `issue-<n>` event with its model usage. A sweep writes one `sweep#owner` item (`sk = <iso timestamp>`, attributes `repos`, `durationMs`, `errors`) so the dashboard can show the last sweep. The sticky-comment cache stays the source of truth for review reuse; the table is additive and nothing migrates. Month cost is summed on read over the current calendar month over `source = llm` events only, so a cache hit (which carries the original call's `costUsd`) is never counted twice. No counters.
 
 ## Dashboard
 
