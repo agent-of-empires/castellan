@@ -19,6 +19,17 @@ const fixtures: EvalCase[] = readdirSync(DIR)
 	.sort()
 	.map((f) => JSON.parse(readFileSync(`${DIR}/${f}`, "utf8")));
 
+const NAMED = [
+	"escalate-external-feat",
+	"escalate-failing-check",
+	"escalate-protected-path",
+	"merge-clean",
+	"skip-draft",
+	"veto-unrelated-change",
+].map((n) => `fixture/${n}`);
+// fixtures written by `--save` must not require editing these tests
+const named = fixtures.filter((c) => NAMED.includes(c.name));
+
 describe("fixtures", () => {
 	it("has no merge verdict that humans did not merge as-is", async () => {
 		const results = await replay(fixtures);
@@ -26,10 +37,10 @@ describe("fixtures", () => {
 	});
 
 	it("replays each fixture to its expected verdict", async () => {
-		const results = await replay(fixtures);
+		const results = await replay(named);
 		expect(
 			Object.fromEntries(results.map((r) => [r.case.name, r.verdict])),
-		).toEqual({
+		).toMatchObject({
 			"fixture/escalate-external-feat": "escalate",
 			"fixture/escalate-failing-check": "escalate",
 			"fixture/escalate-protected-path": "escalate",
@@ -81,6 +92,7 @@ describe("renderReport", () => {
 		expect(report).toContain("Precision of `merge`: 50.0% (2/4)");
 		expect(report).toContain("| reverted | 1 |");
 		expect(report).toContain("| closed | 1 |");
+		expect(report).toContain("all PRs in the merge class: 66.7% (4/6)");
 		expect(report).toContain("in the merge class: 80.0% (4/5)");
 		expect(report).toContain("merge class: 2.0 h (3 PRs)");
 		expect(report).toContain("Merged with zero human review: 2 of 5");
@@ -98,7 +110,7 @@ describe("renderReport", () => {
 describe("recordReviews", () => {
 	it("reviews only rule candidates", async () => {
 		const reviewFn = vi.fn(async () => base.review as ReviewResult);
-		const stripped = fixtures.map(({ review: _r, ...c }) => c);
+		const stripped = named.map(({ review: _r, ...c }) => c);
 		const out = await recordReviews(stripped, reviewFn);
 		expect(reviewFn).toHaveBeenCalledTimes(2);
 		expect(
@@ -141,6 +153,7 @@ describe("collectCases", () => {
 		pull(2, { merged_at: null }),
 		pull(3, { body: "Reverts #1" }),
 		pull(4, { closed_at: "2025-01-01T00:00:00Z" }),
+		pull(5),
 	];
 	const review = (login: string, state: string) => ({
 		user: { login },
@@ -171,6 +184,15 @@ describe("collectCases", () => {
 		if (route.endsWith("/files"))
 			return [
 				{ filename: "a.ts", status: "modified", additions: 1, deletions: 0 },
+			];
+		if (route.endsWith("/pulls/{pull_number}/commits"))
+			return [
+				{ author: { login: "alice", type: "User" } },
+				{ author: { login: "dependabot[bot]", type: "Bot" } },
+				{ author: null },
+				...(p.pull_number === 5
+					? [{ author: { login: "carol", type: "User" } }]
+					: []),
 			];
 		if (route.endsWith("/reviews"))
 			return p.pull_number === 3
@@ -209,6 +231,7 @@ describe("collectCases", () => {
 			["o/r#1", "reverted"],
 			["o/r#2", "closed"],
 			["o/r#3", "changes_requested"],
+			["o/r#5", "changed_by_human"],
 		]);
 		const [first, , third] = cases;
 		expect(first?.snapshot).toMatchObject({

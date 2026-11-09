@@ -11,9 +11,10 @@ pnpm lint        # biome check
 pnpm typecheck   # tsc --noEmit
 pnpm test        # vitest run
 pnpm build       # esbuild bundle to dist/lambda/index.mjs
+pnpm eval        # replay eval/fixtures, needs the build; fails on a bad merge verdict
 ```
 
-Run all four before pushing. CI runs the same.
+Run all five before pushing. CI runs the same.
 
 ## Conventions
 

@@ -9,7 +9,7 @@
 		"draft": false,
 		"baseRef": "main",
 		"baseSha": "base1",
-		"headRef": "fix/empty-config",
+		"headRef": "feat/telemetry",
 		"headSha": "ccc222",
 		"linkedIssues": [7],
 		"files": [

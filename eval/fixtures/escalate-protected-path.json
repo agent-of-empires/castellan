@@ -21,7 +21,7 @@
 			}
 		],
 		"filesTruncated": false,
-		"diff": "diff --git a/src/config.ts b/src/config.ts\n",
+		"diff": "diff --git a/src/release/publish.ts b/src/release/publish.ts\n",
 		"diffTruncated": false,
 		"checks": [
 			{

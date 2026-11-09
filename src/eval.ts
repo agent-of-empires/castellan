@@ -13,6 +13,7 @@ import { decide } from "./verdict.js";
 export type OutcomeKind =
 	| "merged_clean"
 	| "changes_requested"
+	| "changed_by_human"
 	| "reverted"
 	| "closed";
 
@@ -108,8 +109,9 @@ export const mistakes = (results: Result[]) =>
 
 /**
  * Precision: share of `merge` verdicts that humans merged with no changes
- * requested and no revert. Coverage: share of PRs that got a verdict (not
- * skipped) that reached `merge`. Recall is not reported; it is irrelevant for
+ * requested, no revert and no commit pushed by someone other than the author
+ * or a bot. Coverage: share of all PRs considered that reached `merge`; the
+ * share among judged (not skipped) PRs is reported separately. Recall is not reported; it is irrelevant for
  * safety (RFC agent-of-empires#5502, Rollout).
  */
 export function renderReport(results: Result[], title: string): string {
@@ -119,6 +121,7 @@ export function renderReport(results: Result[], title: string): string {
 	const kinds: OutcomeKind[] = [
 		"merged_clean",
 		"changes_requested",
+		"changed_by_human",
 		"reverted",
 		"closed",
 	];
@@ -149,7 +152,8 @@ export function renderReport(results: Result[], title: string): string {
 		"",
 		"## Coverage",
 		"",
-		`- Share of judged PRs in the merge class: ${pct(merges.length, judged.length)}`,
+		`- Share of all PRs in the merge class: ${pct(merges.length, results.length)}`,
+		`- Share of judged PRs (skips excluded) in the merge class: ${pct(merges.length, judged.length)}`,
 		`- Median CI green to merge, merge class: ${hours.length ? `${median(hours).toFixed(1)} h (${hours.length} PRs)` : "n/a"}`,
 		`- Merged with zero human review: ${unreviewed.length} of ${merged.length}`,
 		`  - castellan \`merge\`: ${unreviewed.filter((r) => r.verdict === "merge").length}`,
@@ -257,6 +261,17 @@ export async function collectCases(
 			const human = draft.reviews.filter(
 				(r) => !r.login.endsWith("[bot]") && r.login !== draft.author,
 			);
+			const commits = await transport.paginate(
+				"GET /repos/{owner}/{repo}/pulls/{pull_number}/commits",
+				{ owner, repo, pull_number: pull.number, per_page: 100 },
+			);
+			// offline metric, not a trust decision: Bot type is enough
+			const changedByHuman = commits.some(
+				(c) =>
+					c.author &&
+					c.author.login !== draft.author &&
+					c.author.type !== "Bot",
+			);
 			const merged = pull.merged_at !== null;
 			const kind: OutcomeKind = !merged
 				? "closed"
@@ -264,7 +279,9 @@ export async function collectCases(
 					? "reverted"
 					: human.some((r) => r.state === "CHANGES_REQUESTED")
 						? "changes_requested"
-						: "merged_clean";
+						: changedByHuman
+							? "changed_by_human"
+							: "merged_clean";
 			const runs = await transport.paginate(
 				"GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
 				{ owner, repo, ref: draft.headSha, per_page: 100 },
