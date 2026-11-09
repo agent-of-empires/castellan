@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/agent-of-empires/castellan/compare/v0.1.1...v0.2.0) (2026-11-09)
+
+
+### Features
+
+* **brief:** readable comment, model in shadow, shadow status ([#69](https://github.com/agent-of-empires/castellan/issues/69)) ([1568997](https://github.com/agent-of-empires/castellan/commit/1568997f17a0dc80c0606ba0cf4a7e5a50e3af85))
+
+
+### Bug Fixes
+
+* **rules:** treat skipped required checks as satisfied ([#68](https://github.com/agent-of-empires/castellan/issues/68)) ([35103ce](https://github.com/agent-of-empires/castellan/commit/35103ce7e1dcc654d0fbc0e2a42151633a7102c5))
+
 ## [0.1.1](https://github.com/agent-of-empires/castellan/compare/v0.1.0...v0.1.1) (2026-11-09)
 
 
