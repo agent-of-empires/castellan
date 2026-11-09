@@ -60,14 +60,14 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 
 ### What the Lambda handles
 
-| Event                 | Runs on                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                                |
-| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA  |
-| `pull_request_review` | `submitted`, except the App's own review                                               |
-| `status`              | any, except the `castellan` context itself                                             |
-| `issues`              | `opened`, `labeled`: triage. Issues without `needs-triage` exit early; the sweep is the fallback |
-| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                            |
+| Event                 | Runs on                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                               |
+| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA |
+| `pull_request_review` | `submitted`, except the App's own review                                              |
+| `status`              | any, except the `castellan` context itself                                            |
+| `issues`              | `opened`, `labeled`: triage. Without `needs-triage` it exits early; sweep is backup   |
+| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                           |
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
 
