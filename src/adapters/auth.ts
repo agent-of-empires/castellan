@@ -1,4 +1,5 @@
 import { Octokit } from "octokit";
+import { CONFIG_SOURCES, type ConfigSource } from "../central.js";
 import type { Config } from "../config.js";
 import { appLogin, installationTransport } from "../github.js";
 import type { Env } from "../pipeline.js";
@@ -15,6 +16,17 @@ export function parseMode(
 		throw new Error(`${source} must be one of ${MODES.join(", ")}`);
 	}
 	return value as Config["mode"];
+}
+
+export function parseConfigSource(
+	value: string | undefined,
+	source: string,
+): ConfigSource | undefined {
+	if (value === undefined) return undefined;
+	if (!(CONFIG_SOURCES as readonly string[]).includes(value)) {
+		throw new Error(`${source} must be one of ${CONFIG_SOURCES.join(", ")}`);
+	}
+	return value as ConfigSource;
 }
 
 export interface AuthInput {

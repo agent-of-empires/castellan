@@ -1,10 +1,16 @@
 /** GitHub Action adapter. Reads the event from GITHUB_EVENT_PATH and credentials from INPUT_* (see action.yml). */
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { ConfigSource } from "../central.js";
 import type { Config } from "../config.js";
 import type { Repo } from "../github.js";
 import { type Env, evaluatePull, listWork, triageIssue } from "../pipeline.js";
-import { type AuthInput, parseMode, resolveAuth } from "./auth.js";
+import {
+	type AuthInput,
+	parseConfigSource,
+	parseMode,
+	resolveAuth,
+} from "./auth.js";
 import { failed, type Item } from "./result.js";
 
 interface Payload {
@@ -94,10 +100,11 @@ export async function handleEvent(
 const input = (env: NodeJS.ProcessEnv, name: string) =>
 	env[`INPUT_${name}`] || undefined;
 
-/** Everything the workflow passes in as inputs. Throws on an invalid `mode`. */
+/** Everything the workflow passes in as inputs. Throws on an invalid `mode` or `config-source`. */
 export function inputsFromEnv(env: NodeJS.ProcessEnv): {
 	auth: AuthInput;
 	mode?: Config["mode"];
+	configSource?: ConfigSource;
 	apiKey?: string;
 } {
 	return {
@@ -109,6 +116,10 @@ export function inputsFromEnv(env: NodeJS.ProcessEnv): {
 			botLogin: input(env, "BOT_LOGIN"),
 		},
 		mode: parseMode(input(env, "MODE"), "mode input"),
+		configSource: parseConfigSource(
+			input(env, "CONFIG_SOURCE") || env.CASTELLAN_CONFIG_SOURCE || undefined,
+			"config-source input",
+		),
 		apiKey: input(env, "ANTHROPIC_API_KEY"),
 	};
 }
@@ -128,7 +139,7 @@ export function eventFromEnv(env: NodeJS.ProcessEnv) {
 
 async function main(env = process.env) {
 	const event = eventFromEnv(env);
-	const { auth, mode, apiKey } = inputsFromEnv(env);
+	const { auth, mode, configSource, apiKey } = inputsFromEnv(env);
 	const items = await handleEvent(
 		event.name,
 		event.payload,
@@ -138,6 +149,9 @@ async function main(env = process.env) {
 				"github-token, or app-id, installation-id and private-key",
 			)),
 			mode,
+			configSource,
+			centralLocator: env.CASTELLAN_CENTRAL_CONFIG || undefined,
+			centralCache: new Map(),
 			llm: { apiKey },
 		},
 		event.repo,

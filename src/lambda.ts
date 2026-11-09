@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { type ConfigSource, centralWarnings } from "./central.js";
 import type { GithubTransport } from "./github.js";
 import { type Env, evaluatePull, listWork, triageIssue } from "./pipeline.js";
 import type { Secrets } from "./secrets.js";
@@ -12,6 +13,9 @@ export interface Deps {
 		secrets: Secrets,
 	): Promise<{ transport: GithubTransport; login: string }>;
 	llm?: Env["llm"];
+	configSource?: ConfigSource;
+	/** `CASTELLAN_CENTRAL_CONFIG`. */
+	centralLocator?: string;
 }
 
 /** The slice of the Function URL payload (2.0) and the EventBridge sweep event used here. */
@@ -107,6 +111,11 @@ export function createHandler(deps: Deps) {
 		const name = full.toLowerCase();
 		return exact.has(name) || owners.has(name.split("/")[0] ?? "");
 	};
+	if (deps.configSource === "central") {
+		for (const w of centralWarnings(deps.repos, deps.centralLocator)) {
+			console.warn(w);
+		}
+	}
 	// Once per container; a rejection is not cached, so the next invocation retries.
 	let secrets: Promise<Secrets> | undefined;
 	let env: Promise<Env> | undefined;
@@ -120,13 +129,24 @@ export function createHandler(deps: Deps) {
 	const getEnv = () => {
 		env ??= getSecrets()
 			.then(deps.connect)
-			.then((c) => ({ ...c, llm: deps.llm }))
+			.then((c) => ({
+				...c,
+				llm: deps.llm,
+				configSource: deps.configSource,
+				centralLocator: deps.centralLocator,
+			}))
 			.catch((err) => {
 				env = undefined;
 				throw err;
 			});
 		return env;
 	};
+
+	/** The container's env with a fresh central memo, so nothing is cached across invocations. */
+	const perInvocation = async (): Promise<Env> => ({
+		...(await getEnv()),
+		centralCache: new Map(),
+	});
 
 	const pullsForSha = async (e: Env, p: Payload, sha: string) => {
 		if (!p.repository) return [];
@@ -213,7 +233,7 @@ export function createHandler(deps: Deps) {
 		if (!p.repository || !full || !isAllowed(full)) {
 			return reply(200, "ignored: repository not allowed");
 		}
-		const e = await getEnv();
+		const e = await perInvocation();
 		const repoRef = {
 			owner: p.repository.owner.login,
 			repo: p.repository.name,
@@ -268,7 +288,7 @@ export function createHandler(deps: Deps) {
 	}
 
 	async function sweep(ctx?: LambdaContext) {
-		const e = await getEnv();
+		const e = await perInvocation();
 		const { targets, listingFailed } = await sweepTargets(e);
 		let infra = listingFailed ? 1 : 0;
 		for (const full of targets) {

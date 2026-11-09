@@ -24,6 +24,8 @@ export interface Context {
 	codeowners: CodeownersRule[];
 	/** Linked issue numbers that carry the configured bug label. */
 	bugIssues: number[];
+	/** Path of the shared central config when this repo hosts it. */
+	centralPath?: string;
 }
 
 type Hit = { text: string; path?: string };
@@ -113,8 +115,12 @@ const SKIP: Record<string, Rule> = {
 	mode_off: (_s, c) => when(c.mode === "off", "mode is off"),
 };
 
-const castellanConfig: Rule = (s) =>
-	paths(touching(s, [CONFIG_PATH]), `touches ${CONFIG_PATH}`);
+const castellanConfig: Rule = (s, _c, _r, x) => [
+	...paths(touching(s, [CONFIG_PATH]), `touches ${CONFIG_PATH}`),
+	...(x.centralPath
+		? paths(touching(s, [`/${x.centralPath}`]), "touches the central config")
+		: []),
+];
 
 const codeownersFile: Rule = (s) =>
 	paths(

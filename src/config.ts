@@ -175,15 +175,78 @@ export function githubReader(
 	};
 }
 
-/** Reads `.castellan.yml` at `ref` only. `ok: false` means the caller must escalate. */
+type Doc = Record<string, unknown>;
+
+const isDoc = (v: unknown): v is Doc =>
+	typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Parses one YAML document into a mapping; empty means `{}`. */
+export function parseDoc(text: string, label: string): Doc {
+	const raw = parse(text) ?? {};
+	if (!isDoc(raw)) throw new Error(`${label} must be a YAML mapping`);
+	return raw;
+}
+
+/** Drops the `!` marker from every key. Used where there is nothing below to replace. */
+function unmark(v: unknown): unknown {
+	if (!isDoc(v)) return v;
+	return Object.fromEntries(
+		Object.entries(v).map(([k, x]) => [k.replace(/!$/, ""), unmark(x)]),
+	);
+}
+
+/** Throws on a `key!` anywhere in a document that has no layer below it. */
+export function assertNoReplace(doc: unknown, label: string, path = "") {
+	if (!isDoc(doc)) return;
+	for (const [k, v] of Object.entries(doc)) {
+		if (k.endsWith("!")) {
+			throw new Error(
+				`${label}: ${path}${k} replaces a lower layer, but there is none below`,
+			);
+		}
+		assertNoReplace(v, label, `${path}${k}.`);
+	}
+}
+
+/** Raw merge of two layers: objects recurse, arrays append with exact dedupe, `key!` replaces, scalars take the upper. */
+export function mergeDocs(lower: Doc, upper: Doc): Doc {
+	const out: Doc = { ...lower };
+	for (const [k, v] of Object.entries(upper)) {
+		const replace = k.endsWith("!");
+		const key = replace ? k.slice(0, -1) : k;
+		if (replace && key in upper) {
+			throw new Error(`both ${key} and ${k} are set in one document`);
+		}
+		const below = out[key];
+		out[key] =
+			replace || below === undefined
+				? unmark(v)
+				: isDoc(below) && isDoc(v)
+					? mergeDocs(below, v)
+					: Array.isArray(below) && Array.isArray(v)
+						? [...new Set([...below, ...v])]
+						: unmark(v);
+	}
+	return out;
+}
+
+/**
+ * Reads `.castellan.yml` at `ref` only, on top of the already merged lower layer `below`, if any.
+ * `ok: false` means the caller must escalate.
+ */
 export async function loadConfig(
 	ref: string,
 	readFile: ReadFile,
+	below?: Doc,
 ): Promise<ConfigResult> {
 	let raw: unknown = {};
 	try {
 		const text = await readFile(ref, CONFIG_PATH);
-		if (text !== null) raw = parse(text) ?? {};
+		if (below) {
+			raw = mergeDocs(below, text === null ? {} : parseDoc(text, CONFIG_PATH));
+		} else if (text !== null) {
+			raw = parse(text) ?? {};
+		}
 	} catch (e) {
 		return { ok: false, error: `cannot read ${CONFIG_PATH}: ${String(e)}` };
 	}
