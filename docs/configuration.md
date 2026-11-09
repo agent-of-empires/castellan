@@ -16,9 +16,11 @@ Changes to `prompt.*` or `models.review` change the prompt hash, so the next eva
 
 `off | shadow | enforce`. Default `shadow`.
 
-- `off`: nothing is evaluated, posted or written. PRs are skipped, triage returns "off".
-- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Triage comments a proposal. Nothing is approved, merged, labeled or written to a project.
-- `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict; triage applies labels and project fields and removes `needs-triage`.
+- `off`: nothing is evaluated, posted or written. PRs are skipped.
+- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Nothing is approved, merged, labeled or written to a project.
+- `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict.
+
+These describe the PR gate. Issue triage follows `triage.mode`, which defaults to this value.
 
 The GitHub Action input `mode` and the CLI `--mode` flag override this key and `triage.mode`. Any value other than the three above fails the run.
 
@@ -292,7 +294,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 ### Triage
 
-- Runs only while the issue has `labels.needsTriage`. Skipped when nothing is missing; in `enforce` the label is then removed.
+- Runs only while the issue has `labels.needsTriage`. Skipped when nothing is missing; in `enforce` (`triage.mode`) the label is then removed.
 - Fills only what is missing: the priority label, one `area:*` label, the type label (`labels.bug` or `labels.feature`), and the project Size, Status, Priority and (features only) Roadmap fields. It never overwrites a value that is set.
 - The model must choose a priority from `triage.priority_labels` and an area from the repo's existing `area:*` labels, and both labels must exist. Sizes are `XS`, `S`, `M`, `L`, `XL`. Labels are not created.
 - Every name (project, field, option, label) is resolved before any write. A name that cannot be found fails closed with nothing written.
