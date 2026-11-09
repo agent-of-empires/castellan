@@ -25,14 +25,53 @@ function fake(comments: unknown[]) {
 }
 
 describe("status", () => {
-	it("maps merge to success and escalate to pending, never failure", () => {
-		expect(statusFor("merge").state).toBe("success");
-		expect(statusFor("escalate").state).toBe("pending");
+	it("enforce maps merge to success and escalate to pending, never failure", () => {
+		expect(statusFor("merge", "enforce")).toEqual({
+			state: "success",
+			description: "castellan: merge",
+		});
+		expect(statusFor("escalate", "enforce", "r")).toEqual({
+			state: "pending",
+			description: "castellan: escalated to a human",
+		});
+	});
+
+	it("shadow is always success and says what would happen", () => {
+		expect(statusFor("merge", "shadow")).toEqual({
+			state: "success",
+			description: "shadow: would merge",
+		});
+		expect(statusFor("escalate", "shadow", "touches\n a path")).toEqual({
+			state: "success",
+			description: "shadow: would escalate (touches a path)",
+		});
+	});
+
+	it("never splits a surrogate pair when truncating", () => {
+		const { description } = statusFor(
+			"escalate",
+			"shadow",
+			"\u{1F600}".repeat(200),
+		);
+		expect(Array.from(description)).toHaveLength(140);
+		expect(description).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+	});
+
+	it("keeps the shadow description within GitHub's 140 character limit", () => {
+		const { description } = statusFor("escalate", "shadow", "x".repeat(500));
+		expect(description).toHaveLength(140);
 	});
 
 	it("posts the castellan context linking to the comment", async () => {
 		const { transport, request } = fake([]);
-		await setStatus(transport, repo, "sha1", "merge", url);
+		await setStatus(
+			transport,
+			repo,
+			"sha1",
+			{ verdict: "merge", reasons: [] },
+			"enforce",
+			url,
+		);
 		expect(request).toHaveBeenCalledWith(
 			"POST /repos/{owner}/{repo}/statuses/{sha}",
 			expect.objectContaining({

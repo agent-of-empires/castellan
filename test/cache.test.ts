@@ -108,7 +108,7 @@ describe("getOrRun", () => {
 		const r = await getOrRun({
 			cached: block,
 			key,
-			ruleEscalated: false,
+			skipModel: false,
 			run: fn,
 		});
 		expect(r).toEqual({ source: "cache", result: ok });
@@ -125,7 +125,7 @@ describe("getOrRun", () => {
 		const r = await getOrRun({
 			cached: block,
 			key: { ...key, ...change },
-			ruleEscalated: false,
+			skipModel: false,
 			run: fn,
 		});
 		expect(r.source).toBe("llm");
@@ -134,7 +134,7 @@ describe("getOrRun", () => {
 
 	it("runs when there is no cached block or no cached llm result", async () => {
 		const fn = run();
-		const none = { cached: null, key, ruleEscalated: false, run: fn };
+		const none = { cached: null, key, skipModel: false, run: fn };
 		await getOrRun(none);
 		await getOrRun({ ...none, cached: { verdict: "escalate", ...key } });
 		expect(fn).toHaveBeenCalledTimes(2);
@@ -149,18 +149,18 @@ describe("getOrRun", () => {
 		const r = await getOrRun({
 			cached: null,
 			key,
-			ruleEscalated: false,
+			skipModel: false,
 			run: async () => failed,
 		});
 		expect(r).toEqual({ source: "llm", result: failed });
 	});
 
-	it("never calls the LLM for rule-escalated PRs, even with no cache", async () => {
+	it("never calls the LLM when skipModel is set, even with no cache", async () => {
 		const fn = run();
 		const r = await getOrRun({
 			cached: null,
 			key,
-			ruleEscalated: true,
+			skipModel: true,
 			run: fn,
 		});
 		expect(r).toEqual({ source: "skipped" });

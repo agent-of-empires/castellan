@@ -152,6 +152,67 @@ describe("evaluatePull", () => {
 		expect(w.routes()).not.toContain(APPROVE);
 	});
 
+	it("runs the model on a rule escalation in shadow, as advice only", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledOnce();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("**Verdict: escalate** (shadow)");
+		expect(body).toContain("advisory, rules decided the verdict");
+		expect(
+			w.request.mock.calls.find((c) => c[0] === STATUS)?.[1],
+		).toMatchObject({ state: "success" });
+	});
+
+	it("keeps the rule verdict and a shadow status when the model call fails", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockRejectedValue(new Error("down"));
+		const r = await evaluatePull(w.env, repo, 3);
+		const reasons = r.brief?.outcome.reasons ?? [];
+		expect(reasons.length).toBeGreaterThan(0);
+		expect(reasons.some((x) => x.rule.startsWith("llm_"))).toBe(false);
+		expect(r.brief?.reviewError).toBe("sdk_error");
+		expect(
+			w.request.mock.calls.find((c) => c[0] === STATUS)?.[1],
+		).toMatchObject({
+			state: "success",
+			description: expect.stringMatching(/^shadow: would escalate \(.+\)$/),
+		});
+	});
+
+	it("leaves the reasons unchanged when the model vetoes a rule escalation in shadow", async () => {
+		const base = world({ yaml: "mode: shadow" });
+		const expected = (await evaluatePull(base.env, repo, 3)).brief?.outcome
+			.reasons;
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: false,
+						new_behavior: true,
+						reasons: [{ severity: "blocker", text: "bad" }],
+					}),
+				},
+			],
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.reasons).toEqual(expected);
+		expect(r.brief?.review?.verdict.intent_match).toBe(false);
+	});
+
+	it("does not run the model on a rule escalation in enforce", async () => {
+		const w = world({ yaml: "mode: enforce" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Model: not run (rules decided)");
+	});
+
 	it("fails closed when the model is unavailable", async () => {
 		const w = world();
 		w.create.mockRejectedValue(new Error("down"));
