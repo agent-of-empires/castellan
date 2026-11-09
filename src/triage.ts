@@ -315,7 +315,7 @@ export async function triage(
 	}
 
 	const labels = [
-		...(havePriority ? [] : [c.priority]),
+		...(havePriority ? [] : [priority]),
 		...(haveArea ? [] : [c.area]),
 		...(haveType ? [] : [c.type === "bug" ? bug : feature]),
 	];
@@ -392,10 +392,23 @@ export async function triage(
 		);
 	}
 	lines.push("", "Fit is not set by triage; it stays with maintainers.");
-	await transport.request(
-		"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-		{ owner, repo, issue_number: issue.number, body: lines.join("\n") },
+	// The sweep re-triages while needs-triage stays, so the same result must not comment twice.
+	const marker = `<!-- castellan triage ${hashOf([proposal])} -->`;
+	const comments = await transport.paginate(
+		"GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+		{ owner, repo, issue_number: issue.number, per_page: 100 },
 	);
+	if (!comments.some((c) => c.body?.trimEnd().endsWith(marker))) {
+		await transport.request(
+			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+			{
+				owner,
+				repo,
+				issue_number: issue.number,
+				body: [...lines, "", marker].join("\n"),
+			},
+		);
+	}
 
 	if (config.mode === "enforce") await removeNeedsTriage();
 	return { ok: true, mode: config.mode, proposal };

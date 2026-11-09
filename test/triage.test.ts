@@ -81,6 +81,7 @@ function world(
 		repoLabels?: string[];
 		pageSize?: number;
 		failSet?: boolean;
+		comments?: string[];
 	} = {},
 ) {
 	const log: string[] = [];
@@ -133,11 +134,18 @@ function world(
 		log.push(route);
 		return { data: {} };
 	});
+	const paginate = vi.fn(async (route: string) => {
+		if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}/comments") {
+			return (opts.comments ?? []).map((body, i) => ({ id: i + 1, body }));
+		}
+		return [];
+	});
 	return {
 		graphql,
+		paginate,
 		request,
 		log,
-		transport: { graphql, request } as unknown as GithubTransport,
+		transport: { graphql, paginate, request } as unknown as GithubTransport,
 	};
 }
 
@@ -523,6 +531,53 @@ describe("triage", () => {
 		expect(body).not.toMatch(/@\w/);
 		expect(body).not.toContain("http");
 		expect(body).toContain("ping bob click or");
+	});
+
+	it("labels the existing project priority, not the model's guess", async () => {
+		const w = world({
+			labels: ["needs-triage", "area:core", "bug"],
+			items: [
+				{
+					id: "IT",
+					project: { id: "PRJ" },
+					fieldValues: {
+						nodes: [{ name: "P0", field: { name: "Priority" } }],
+					},
+				},
+			],
+		});
+		const { r } = await run(w, "mode: enforce");
+		// area:core and bug are already labels, so only the priority label is proposed
+		expect(r).toMatchObject({
+			proposal: {
+				labels: ["P0"],
+				fields: [
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Ready" },
+				],
+			},
+		});
+		expect(w.request.mock.calls[0]?.[1]).toMatchObject({ labels: ["P0"] });
+	});
+
+	it("does not post the same proposal comment on a later sweep", async () => {
+		const first = world();
+		await run(first, "");
+		const posted = commentBody(first.request);
+		expect(posted).not.toBe("");
+
+		const second = world({ comments: [posted] });
+		const { r } = await run(second, "");
+		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		expect(routes(second.request)).not.toContain(COMMENT);
+	});
+
+	it("posts again when the proposal changed", async () => {
+		const first = world();
+		await run(first, "", { ...answer, priority: "P3" });
+		const second = world({ comments: [commentBody(first.request)] });
+		await run(second, "");
+		expect(routes(second.request)).toContain(COMMENT);
 	});
 });
 
