@@ -19,6 +19,14 @@ pnpm test
 pnpm build   # dist/lambda/index.mjs
 ```
 
+## Releases
+
+1. Conventional commits on `main` keep a release-please PR open with the next version and changelog.
+2. Merging that PR tags `vX.Y.Z` and publishes a GitHub release.
+3. The release workflow builds the bundle and attaches `castellan-lambda-<version>.zip` and its `.sha256`.
+
+Requires a `RELEASE_PLEASE_TOKEN` repo secret (PAT or app token) so the published release triggers the workflow.
+
 See [AGENTS.md](AGENTS.md) for contribution conventions.
 
 ## License
