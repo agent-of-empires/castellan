@@ -95,7 +95,7 @@ export interface PullResult {
 /**
  * Runs the full pipeline for one PR: snapshot, rules, model, verdict, act.
  * With `dryRun` nothing is written (no comment, status, approval or merge) and
- * the brief is returned. Once the head is known, a failure sets the status to
+ * the brief is returned. Once the head is known (team lookup and snapshot included), a failure sets the status to
  * pending (escalated) so a stale `success` cannot stay, then rethrows.
  */
 export async function evaluatePull(
@@ -118,15 +118,15 @@ export async function evaluatePull(
 		pr.base.sha,
 	);
 	if (!error && config.mode === "off") return { status: "skipped" };
-	const authorClass = await classify(env, repoRef, config, pr.user.login);
-	const snapshot = await buildSnapshot(
-		transport,
-		repoRef,
-		pullNumber,
-		authorClass,
-	);
 
 	const run = async (): Promise<PullResult> => {
+		const authorClass = await classify(env, repoRef, config, pr.user.login);
+		const snapshot = await buildSnapshot(
+			transport,
+			repoRef,
+			pullNumber,
+			authorClass,
+		);
 		const read = githubReader(transport, repoRef);
 		let codeowners: CodeownersRule[] = [];
 		if (config.teams.protected) {
@@ -219,7 +219,7 @@ export async function evaluatePull(
 			.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
 				owner,
 				repo,
-				sha: snapshot.headSha,
+				sha: pr.head.sha,
 				context: STATUS_CONTEXT,
 				...statusFor("escalate"),
 				description: "castellan: internal error",
