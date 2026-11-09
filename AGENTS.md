@@ -17,7 +17,7 @@ Run all four before pushing. CI runs the same.
 
 ## Conventions
 
-- Do not use em dashes or `--` as prose separators in code, comments, docs, commits, or PR text.
+- Do not use em dashes (U+2014) or en dashes (U+2013) anywhere: code, docs, comments, commits, or PR text. Do not use `--` as a prose separator. The one exception is the verbatim AI disclosure header line in PR and issue bodies.
 - Conventional commits: `<type>(<scope>): <imperative lowercase subject>`, with type one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
 - Every PR and issue body starts with an AI disclosure. PRs also fill the `AI Usage` section of the template.
 - Update docs in the same change that alters behavior. Delete or fix stale docs when you make them stale.
