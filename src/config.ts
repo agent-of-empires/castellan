@@ -17,6 +17,14 @@ const base = z.strictObject({
 		.strictObject({
 			protected: z.array(z.string()).default([]),
 			release: z.array(z.string()).default([]),
+			migrations: z
+				.array(z.string())
+				.default([
+					"migrations/",
+					"migration/",
+					"db/migrate/",
+					"alembic/versions/",
+				]),
 		})
 		.prefault({}),
 	teams: z
@@ -31,11 +39,15 @@ const base = z.strictObject({
 				.string()
 				.optional()
 				.describe(
-					"Team slug within the installation org (the org comes from the event).",
+					"Team slug, or org/slug (the org prefix is ignored; the org comes from the event).",
 				),
 		})
 		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
+	skip_branches: z
+		.array(z.string())
+		.default(["release-staging/*", "release-plz-*"])
+		.describe("Head branch globs that castellan never evaluates."),
 	labels: z
 		.strictObject({
 			needsTriage: z.string().default("needs-triage"),

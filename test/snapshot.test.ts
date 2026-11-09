@@ -37,7 +37,10 @@ function fixture(over: Over = {}) {
 		merged: over.merged ?? false,
 		draft: false,
 		base: { ref: "main", sha: "base1" },
-		head: { sha: heads.length > 1 ? heads.shift() : heads[0] },
+		head: {
+			ref: "fix/thing",
+			sha: heads.length > 1 ? heads.shift() : heads[0],
+		},
 		labels: [{ name: "castellan:merge" }],
 	});
 	const request = vi.fn(
@@ -91,6 +94,7 @@ describe("buildSnapshot", () => {
 			draft: false,
 			baseRef: "main",
 			baseSha: "base1",
+			headRef: "fix/thing",
 			headSha: "abc",
 			linkedIssues: [1],
 			codeRabbit: "APPROVED",
