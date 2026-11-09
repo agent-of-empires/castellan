@@ -124,6 +124,13 @@ describe("renderComment", () => {
 		expect(parseBlock(out)?.llm).toBeUndefined();
 	});
 
+	it("escapes backslashes and pipes in table cells", () => {
+		const row = (name: string) =>
+			renderComment({ ...brief, checks: [{ name, conclusion: "success" }] });
+		expect(row("a\\|b")).toContain("| a\\\\\\|b | success |");
+		expect(row("a\\b")).toContain("| a\\\\b | success |");
+	});
+
 	it("lists every check run", () => {
 		const out = renderComment(brief);
 		expect(out).toContain("| lint | success |");

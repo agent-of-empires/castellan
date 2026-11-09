@@ -42,7 +42,7 @@ export function escapeText(text: string): string {
 }
 
 const reason = (text: string) => escapeText(text.slice(0, MAX_REASON_CHARS));
-const cell = (text: string) => escapeText(text).replace(/\|/g, "\\|");
+const cell = (text: string) => escapeText(text).replace(/[\\|]/g, "\\$&");
 const at = (path?: string) =>
 	path ? ` (\`${reason(path).replace(/`/g, "")}\`)` : "";
 const yesNo = (b: boolean) => (b ? "yes" : "no");
