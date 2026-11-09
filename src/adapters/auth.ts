@@ -1,6 +1,21 @@
 import { Octokit } from "octokit";
+import type { Config } from "../config.js";
 import { installationTransport } from "../github.js";
 import type { RunDeps } from "../run.js";
+
+const MODES = ["off", "shadow", "enforce"];
+
+/** Exact match only: act.ts treats anything but `off` and `shadow` as enforce, so a typo must not get through. */
+export function parseMode(
+	value: string | undefined,
+	source: string,
+): Config["mode"] | undefined {
+	if (value === undefined) return undefined;
+	if (!MODES.includes(value)) {
+		throw new Error(`${source} must be one of ${MODES.join(", ")}`);
+	}
+	return value as Config["mode"];
+}
 
 export interface AuthInput {
 	token?: string;
@@ -31,7 +46,9 @@ export async function resolveAuth(
 		};
 	}
 	if (!i.token) {
-		throw new Error("set a token, or app id, installation id and private key");
+		throw new Error(
+			"set GITHUB_TOKEN, or CASTELLAN_APP_ID, CASTELLAN_INSTALLATION_ID and CASTELLAN_PRIVATE_KEY",
+		);
 	}
 	return {
 		transport: new Octokit({ auth: i.token }),

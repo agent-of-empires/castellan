@@ -10,14 +10,20 @@ import {
 	runForPr,
 	sweep,
 } from "../run.js";
-import { resolveAuth } from "./auth.js";
+import { type AuthInput, parseMode, resolveAuth } from "./auth.js";
 
 interface Payload {
-	pull_request?: { number: number };
+	pull_request?: {
+		number: number;
+		head?: { repo?: { fork?: boolean } | null };
+	};
 	issue?: { number: number };
 }
 
-/** `pull_request_target` is refused: it hands write secrets to code from a fork. */
+/**
+ * `pull_request_target` is refused: it hands write secrets to code from a fork.
+ * A fork PR has a read-only token, so it does no work here; the next sweep picks it up.
+ */
 export async function handleEvent(
 	name: string,
 	payload: Payload,
@@ -25,9 +31,16 @@ export async function handleEvent(
 ): Promise<Item[]> {
 	switch (name) {
 		case "pull_request": {
-			const number = payload.pull_request?.number;
-			if (!number) throw new Error("event has no pull_request.number");
-			return [{ kind: "pr", number, result: await runForPr(deps, number) }];
+			const pr = payload.pull_request;
+			if (!pr?.number) throw new Error("event has no pull_request.number");
+			if (pr.head?.repo?.fork) return [];
+			return [
+				{
+					kind: "pr",
+					number: pr.number,
+					result: await runForPr(deps, pr.number),
+				},
+			];
 		}
 		case "issues": {
 			const number = payload.issue?.number;
@@ -51,28 +64,47 @@ export async function handleEvent(
 const input = (env: NodeJS.ProcessEnv, name: string) =>
 	env[`INPUT_${name}`] || undefined;
 
-async function main(env = process.env) {
+/** Everything the workflow passes in as inputs. Throws on an invalid `mode`. */
+export function inputsFromEnv(env: NodeJS.ProcessEnv): {
+	auth: AuthInput;
+	mode?: Config["mode"];
+	apiKey?: string;
+} {
+	return {
+		auth: {
+			token: input(env, "GITHUB_TOKEN"),
+			appId: input(env, "APP_ID"),
+			installationId: input(env, "INSTALLATION_ID"),
+			privateKey: input(env, "PRIVATE_KEY"),
+			botLogin: input(env, "BOT_LOGIN"),
+		},
+		mode: parseMode(input(env, "MODE"), "mode input"),
+		apiKey: input(env, "ANTHROPIC_API_KEY"),
+	};
+}
+
+/** The event name, its payload and the repository the workflow runs in. */
+export function eventFromEnv(env: NodeJS.ProcessEnv) {
 	const [owner, repo] = (env.GITHUB_REPOSITORY ?? "").split("/");
 	if (!(owner && repo && env.GITHUB_EVENT_NAME && env.GITHUB_EVENT_PATH)) {
 		throw new Error("run inside GitHub Actions");
 	}
-	const auth = await resolveAuth({
-		token: input(env, "GITHUB_TOKEN"),
-		appId: input(env, "APP_ID"),
-		installationId: input(env, "INSTALLATION_ID"),
-		privateKey: input(env, "PRIVATE_KEY"),
-		botLogin: input(env, "BOT_LOGIN"),
+	return {
+		name: env.GITHUB_EVENT_NAME,
+		payload: JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8")) as Payload,
+		repo: { owner, repo },
+	};
+}
+
+async function main(env = process.env) {
+	const event = eventFromEnv(env);
+	const { auth, mode, apiKey } = inputsFromEnv(env);
+	const items = await handleEvent(event.name, event.payload, {
+		...(await resolveAuth(auth)),
+		repo: event.repo,
+		mode,
+		llm: { apiKey },
 	});
-	const items = await handleEvent(
-		env.GITHUB_EVENT_NAME,
-		JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8")),
-		{
-			...auth,
-			repo: { owner, repo },
-			mode: input(env, "MODE") as Config["mode"] | undefined,
-			llm: { apiKey: input(env, "ANTHROPIC_API_KEY") },
-		},
-	);
 	for (const item of items) console.log(JSON.stringify(item));
 	if (items.some(failed)) process.exitCode = 1;
 }
