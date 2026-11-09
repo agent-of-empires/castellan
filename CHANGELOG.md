@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/agent-of-empires/castellan/compare/v0.4.0...v0.5.0) (2026-11-09)
+
+
+### Features
+
+* **config:** config sources, central file and layered merge ([#108](https://github.com/agent-of-empires/castellan/issues/108)) ([a83dba1](https://github.com/agent-of-empires/castellan/commit/a83dba1a761a9d8dd52c2e5f6a7a8015b5cab17b))
+
 ## [0.4.0](https://github.com/agent-of-empires/castellan/compare/v0.3.3...v0.4.0) (2026-11-09)
 
 
