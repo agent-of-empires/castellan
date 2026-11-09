@@ -13,7 +13,7 @@ inputs:
   bot-login:
     description: Login castellan acts as (`<slug>[bot]`). Required with an App.
   anthropic-api-key:
-    description: Anthropic API key for the model review. Without it the review fails closed and PRs escalate.
+    description: "Anthropic API key. Only used when .castellan.yml sets llm.provider to anthropic; the default is bedrock, which ignores it and needs ambient AWS credentials."
   mode:
     description: Overrides mode from .castellan.yml (off, shadow, enforce)
 runs:

@@ -23,6 +23,7 @@ jobs:
     steps:
       - uses: agent-of-empires/castellan@v0.1.0
         with:
+          # Only used when .castellan.yml sets llm.provider: anthropic (the default, bedrock, ignores it).
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           # For enforce mode, or to triage project fields, use an App instead:
           # app-id: ${{ vars.CASTELLAN_APP_ID }}
