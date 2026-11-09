@@ -13,9 +13,9 @@ Castellan can approve and merge, so the design keeps a model, a PR author and a 
 
 So the worst a manipulated model can do is escalate, or fail to veto a change the rules already allowed.
 
-## Policy comes from the base commit
+## Policy comes from the base branch
 
-- `.castellan.yml` is read at the PR's base SHA, never the head. A PR cannot loosen the gate it is judged by. The same base SHA is used to read CODEOWNERS for `teams.protected`.
+- `.castellan.yml` is read at the PR's base branch (`pull_request.base.ref`, so the current tip, not the possibly stale `base.sha`), never the head. A PR cannot loosen the gate it is judged by. The same ref is used to read CODEOWNERS for `teams.protected`.
 - A PR that changes `.castellan.yml` (at any depth), CODEOWNERS (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`) or anything under `.github/` always escalates (rules `castellan_config`, `codeowners_file`, `github_dir`), so those need a human.
 - The same check runs again inside `act` just before approving (`protected_guard`), together with `paths.protected`, `paths.release` and `teams.protected`, so a rule bug or reordering cannot let a protected change through.
 - An invalid config escalates and falls back to defaults (`shadow`), never to a more permissive state.

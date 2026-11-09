@@ -120,7 +120,7 @@ export async function evaluatePull(
 	const { config, defaultBranch, error } = await repoConfig(
 		env,
 		repoRef,
-		pr.base.sha,
+		pr.base.ref,
 	);
 	if (!error && config.mode === "off") return { status: "skipped" };
 
@@ -136,7 +136,7 @@ export async function evaluatePull(
 		let codeowners: CodeownersRule[] = [];
 		if (config.teams.protected) {
 			for (const path of CODEOWNERS_PATHS) {
-				const text = await read(snapshot.baseSha, path);
+				const text = await read(pr.base.ref, path);
 				if (text !== null) {
 					codeowners = parseCodeowners(text);
 					break;
