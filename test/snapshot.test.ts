@@ -83,6 +83,19 @@ const snap = (over: Over = {}) =>
 	buildSnapshot(fixture(over).transport, repo, 7, "maintainer");
 
 describe("buildSnapshot", () => {
+	it("snapshots a merged PR only when allowClosed is set", async () => {
+		const over = { state: "closed", merged: true };
+		await expect(snap(over)).rejects.toThrow("not open");
+		const s = await buildSnapshot(
+			fixture(over).transport,
+			repo,
+			7,
+			"maintainer",
+			{ allowClosed: true },
+		);
+		expect(s.headSha).toBe("abc");
+	});
+
 	it("collects pr fields and every check run, mapping a null conclusion to pending", async () => {
 		const { transport, paginate } = fixture();
 		const s = await buildSnapshot(transport, repo, 7, "maintainer");

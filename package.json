@@ -10,6 +10,7 @@
 	"packageManager": "pnpm@10.33.0",
 	"scripts": {
 		"build": "node scripts/build.mjs",
+		"eval": "node dist/eval.mjs",
 		"lint": "biome check .",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"

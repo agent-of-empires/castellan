@@ -1,0 +1,62 @@
+{
+	"name": "fixture/escalate-protected-path",
+	"snapshot": {
+		"title": "fix: handle empty config",
+		"body": "Closes #7",
+		"bodyTruncated": false,
+		"author": "alice",
+		"authorClass": "maintainer",
+		"draft": false,
+		"baseRef": "main",
+		"baseSha": "base1",
+		"headRef": "fix/empty-config",
+		"headSha": "abc123",
+		"linkedIssues": [7],
+		"files": [
+			{
+				"path": "src/release/publish.ts",
+				"status": "modified",
+				"additions": 3,
+				"deletions": 1
+			}
+		],
+		"filesTruncated": false,
+		"diff": "diff --git a/src/release/publish.ts b/src/release/publish.ts\n",
+		"diffTruncated": false,
+		"checks": [
+			{
+				"name": "check",
+				"conclusion": "success"
+			}
+		],
+		"reviews": [],
+		"codeRabbit": null
+	},
+	"context": {
+		"defaultBranch": "main",
+		"codeowners": [],
+		"bugIssues": [7]
+	},
+	"requiredChecks": ["check"],
+	"config": "paths:\n  protected:\n    - src/release/\n",
+	"review": {
+		"ok": true,
+		"verdict": {
+			"intent_match": true,
+			"new_behavior": false,
+			"reasons": []
+		},
+		"usage": {
+			"inputTokens": 1,
+			"outputTokens": 1
+		},
+		"costUsd": 0,
+		"promptHash": "p"
+	},
+	"outcome": {
+		"kind": "merged_clean",
+		"mergedAt": "2026-01-10T12:00:00Z",
+		"ciGreenAt": "2026-01-10T10:00:00Z",
+		"humanReviews": 2
+	}
+}
