@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
+import { Octokit } from "octokit";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createGithubClient,
@@ -8,39 +9,64 @@ import {
 
 const repo = { owner: "agent-of-empires", repo: "castellan" };
 
-function fake(request: unknown, graphql: unknown = vi.fn()): GithubTransport {
-	return { request, graphql } as unknown as GithubTransport;
+function fake(
+	request: unknown,
+	graphql: unknown = vi.fn(),
+	paginate: unknown = vi.fn(),
+): GithubTransport {
+	return { request, graphql, paginate } as unknown as GithubTransport;
 }
+
+const rule = (...contexts: string[]) => ({
+	type: "required_status_checks",
+	parameters: {
+		required_status_checks: contexts.map((context) => ({ context })),
+	},
+});
 
 describe("requiredChecks", () => {
 	it("merges and dedupes required contexts across rulesets", async () => {
-		const request = vi.fn().mockResolvedValue({
-			data: [
+		const paginate = vi
+			.fn()
+			.mockResolvedValue([
 				{ type: "pull_request", parameters: {} },
-				{
-					type: "required_status_checks",
-					parameters: {
-						required_status_checks: [{ context: "lint" }, { context: "test" }],
-					},
-				},
-				{
-					type: "required_status_checks",
-					parameters: { required_status_checks: [{ context: "test" }] },
-				},
-			],
-		});
-		const client = createGithubClient(fake(request), repo);
+				rule("lint", "test"),
+				rule("test"),
+			]);
+		const client = createGithubClient(fake(vi.fn(), vi.fn(), paginate), repo);
 		expect(await client.requiredChecks("main")).toEqual(["lint", "test"]);
-		expect(request).toHaveBeenCalledWith(
+		expect(paginate).toHaveBeenCalledWith(
 			"GET /repos/{owner}/{repo}/rules/branches/{branch}",
 			expect.objectContaining({ ...repo, branch: "main" }),
 		);
 	});
 
 	it("returns an empty list when no check is required", async () => {
-		const request = vi.fn().mockResolvedValue({ data: [] });
-		const client = createGithubClient(fake(request), repo);
+		const paginate = vi.fn().mockResolvedValue([]);
+		const client = createGithubClient(fake(vi.fn(), vi.fn(), paginate), repo);
 		expect(await client.requiredChecks("main")).toEqual([]);
+	});
+
+	it("returns the union of checks across pages", async () => {
+		const page2 = "https://api.github.com/page2";
+		const fetchMock = vi.fn(async (input: Request | string | URL) => {
+			const url = input instanceof Request ? input.url : String(input);
+			const second = url === page2;
+			return new Response(
+				JSON.stringify(second ? [rule("test")] : [rule("lint")]),
+				{
+					status: 200,
+					headers: {
+						"content-type": "application/json",
+						...(second ? {} : { link: `<${page2}>; rel="next"` }),
+					},
+				},
+			);
+		});
+		const octokit = new Octokit({ request: { fetch: fetchMock } });
+		const client = createGithubClient(octokit, repo);
+		expect(await client.requiredChecks("main")).toEqual(["lint", "test"]);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -66,9 +92,19 @@ describe("isTeamMember", () => {
 		expect(await member(request)).toBe(false);
 	});
 
-	it("is false on 404", async () => {
-		const request = vi.fn().mockRejectedValue({ status: 404 });
+	it("is false on 404 when the team exists", async () => {
+		const request = vi.fn(async (route: string) => {
+			if (route.includes("/memberships/")) throw { status: 404 };
+			return { data: {} };
+		});
 		expect(await member(request)).toBe(false);
+	});
+
+	it("throws a clear error when the team itself is missing", async () => {
+		const request = vi.fn().mockRejectedValue({ status: 404 });
+		await expect(member(request)).rejects.toThrow(
+			"team agent-of-empires/maintainers not found or not readable",
+		);
 	});
 
 	it("rethrows other errors so the caller escalates", async () => {

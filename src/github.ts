@@ -1,7 +1,7 @@
 import { App, Octokit } from "octokit";
 
 /** The slice of Octokit the client uses, so tests can pass a fake. */
-export type GithubTransport = Pick<Octokit, "request" | "graphql">;
+export type GithubTransport = Pick<Octokit, "request" | "graphql" | "paginate">;
 
 export interface Repo {
 	owner: string;
@@ -44,11 +44,11 @@ export function createGithubClient(
 ): GithubClient {
 	return {
 		async requiredChecks(branch) {
-			const { data } = await transport.request(
+			const rules = await transport.paginate(
 				"GET /repos/{owner}/{repo}/rules/branches/{branch}",
 				{ owner, repo, branch, per_page: 100 },
 			);
-			const contexts = data.flatMap((rule) =>
+			const contexts = rules.flatMap((rule) =>
 				rule.type === "required_status_checks"
 					? (rule.parameters?.required_status_checks.map((c) => c.context) ??
 						[])
@@ -65,8 +65,22 @@ export function createGithubClient(
 				);
 				return data.state === "active";
 			} catch (err) {
-				if ((err as { status?: number }).status === 404) return false;
-				throw err;
+				if ((err as { status?: number }).status !== 404) throw err;
+				// 404 is ambiguous: non-member, or the team is missing / unreadable.
+				try {
+					await transport.request("GET /orgs/{org}/teams/{team_slug}", {
+						org,
+						team_slug: teamSlug,
+					});
+				} catch (teamErr) {
+					if ((teamErr as { status?: number }).status === 404) {
+						throw new Error(
+							`team ${org}/${teamSlug} not found or not readable by the App (needs members:read)`,
+						);
+					}
+					throw teamErr;
+				}
+				return false;
 			}
 		},
 
