@@ -238,7 +238,7 @@ describe("more mode and guard cases", () => {
 		expect(paginate).not.toHaveBeenCalled();
 	});
 
-	it("shadow with escalate sets pending and takes no action", async () => {
+	it("shadow with escalate sets a success status and takes no action", async () => {
 		const { request, routes, graphql } = await run(
 			"mode: shadow",
 			{},
@@ -246,7 +246,10 @@ describe("more mode and guard cases", () => {
 		);
 		expect(request).toHaveBeenCalledWith(
 			STATUS,
-			expect.objectContaining({ state: "pending" }),
+			expect.objectContaining({
+				state: "success",
+				description: expect.stringMatching(/^shadow: would escalate/),
+			}),
 		);
 		expect(routes()).not.toContain(APPROVE);
 		expect(graphql).not.toHaveBeenCalled();
@@ -260,7 +263,10 @@ describe("more mode and guard cases", () => {
 		);
 		expect(request).toHaveBeenCalledWith(
 			STATUS,
-			expect.objectContaining({ state: "pending" }),
+			expect.objectContaining({
+				state: "success",
+				description: expect.stringMatching(/^shadow: would escalate/),
+			}),
 		);
 		expect(routes()).not.toContain(APPROVE);
 		expect(graphql).not.toHaveBeenCalled();
