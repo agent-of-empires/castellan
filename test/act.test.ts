@@ -6,6 +6,11 @@ import type { GithubTransport } from "../src/github.js";
 import type { Context } from "../src/rules.js";
 import type { Snapshot } from "../src/snapshot.js";
 
+const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
+const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
+const MERGE = "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge";
+const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
+
 const repo = { owner: "o", repo: "r" };
 const author = { login: "castellan[bot]" };
 const commentUrl = "https://github.com/o/r/pull/3#issuecomment-7";
@@ -42,16 +47,26 @@ const brief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 
 interface World {
 	head?: string;
+	state?: string;
 	autoMerge?: object | null;
 	reviews?: unknown[];
+	reviewError?: Error;
+	graphqlError?: Error;
 }
 
-function fake({ head = "head1", autoMerge = null, reviews = [] }: World = {}) {
-	const request = vi.fn(async (route: string) => {
+function fake({
+	head = "head1",
+	state = "open",
+	autoMerge = null,
+	reviews = [],
+	reviewError,
+	graphqlError,
+}: World = {}) {
+	const request = vi.fn(async (route: string, _params?: unknown) => {
 		if (route.startsWith("GET /repos/{owner}/{repo}/pulls/")) {
 			return {
 				data: {
-					state: "open",
+					state,
 					merged: false,
 					node_id: "PR_1",
 					auto_merge: autoMerge,
@@ -59,19 +74,25 @@ function fake({ head = "head1", autoMerge = null, reviews = [] }: World = {}) {
 				},
 			};
 		}
+		if (route === APPROVE && reviewError) throw reviewError;
 		return { data: { id: 7, html_url: commentUrl } };
 	});
 	const paginate = vi.fn(async (route: string) =>
 		route.endsWith("/reviews") ? reviews : [],
 	);
-	const graphql = vi.fn(async () => ({}));
+	const graphql = vi.fn(async () => {
+		if (graphqlError) throw graphqlError;
+		return {};
+	});
 	const transport = {
 		request,
 		paginate,
 		graphql,
 	} as unknown as GithubTransport;
 	const routes = () => request.mock.calls.map((c) => c[0]);
-	return { transport, request, graphql, routes };
+	const sent = (route: string) =>
+		request.mock.calls.filter((c) => c[0] === route).map((c) => c[1]);
+	return { transport, request, paginate, graphql, routes, sent };
 }
 
 const run = async (
@@ -91,14 +112,12 @@ const run = async (
 	return { ...f, result };
 };
 
-const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
-const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
-
 describe("modes", () => {
 	it("off does nothing", async () => {
-		const { request, graphql, result } = await run("mode: off");
+		const { request, graphql, paginate, result } = await run("mode: off");
 		expect(request).not.toHaveBeenCalled();
 		expect(graphql).not.toHaveBeenCalled();
+		expect(paginate).not.toHaveBeenCalled();
 		expect(result.skipped).toBe("mode_off");
 	});
 
@@ -204,5 +223,133 @@ describe("idempotence", () => {
 			],
 		});
 		expect(routes()).toContain(APPROVE);
+	});
+});
+
+describe("more mode and guard cases", () => {
+	it("off does nothing even for an escalate verdict", async () => {
+		const { request, graphql, paginate } = await run(
+			"mode: off",
+			{},
+			{ verdict: "escalate" },
+		);
+		expect(request).not.toHaveBeenCalled();
+		expect(graphql).not.toHaveBeenCalled();
+		expect(paginate).not.toHaveBeenCalled();
+	});
+
+	it("shadow with escalate sets pending and takes no action", async () => {
+		const { request, routes, graphql } = await run(
+			"mode: shadow",
+			{},
+			{ verdict: "escalate" },
+		);
+		expect(request).toHaveBeenCalledWith(
+			STATUS,
+			expect.objectContaining({ state: "pending" }),
+		);
+		expect(routes()).not.toContain(APPROVE);
+		expect(graphql).not.toHaveBeenCalled();
+	});
+
+	it("shadow with a protected path escalates and takes no action", async () => {
+		const { request, routes, graphql } = await run(
+			"mode: shadow\npaths:\n  protected: [infra/]",
+			{},
+			{ files: ["infra/main.tf"] },
+		);
+		expect(request).toHaveBeenCalledWith(
+			STATUS,
+			expect.objectContaining({ state: "pending" }),
+		);
+		expect(routes()).not.toContain(APPROVE);
+		expect(graphql).not.toHaveBeenCalled();
+	});
+
+	it.each([".castellan.yml", ".github/workflows/ci.yml", "CODEOWNERS"])(
+		"refuses a merge that touches %s",
+		async (file) => {
+			const { routes, graphql, result } = await run(
+				"mode: enforce",
+				{},
+				{ files: [file] },
+			);
+			expect(routes()).not.toContain(APPROVE);
+			expect(graphql).not.toHaveBeenCalled();
+			expect(result.skipped).toBe("not_merge");
+		},
+	);
+
+	it("does not act on a brief for a different head", async () => {
+		const f = fake();
+		const b = brief();
+		const result = await act(f.transport, repo, {
+			pullNumber: 3,
+			snapshot: snapshot(),
+			config: await load("mode: enforce"),
+			ctx,
+			brief: { ...b, key: { ...b.key, headSha: "other" } },
+			author,
+		});
+		expect(f.request).not.toHaveBeenCalled();
+		expect(result.skipped).toBe("stale_head");
+	});
+
+	it("reports a closed PR as not_open", async () => {
+		const { routes, graphql, result } = await run("mode: enforce", {
+			state: "closed",
+		});
+		expect(routes()).not.toContain(APPROVE);
+		expect(graphql).not.toHaveBeenCalled();
+		expect(result.skipped).toBe("not_open");
+	});
+});
+
+describe("queue failures", () => {
+	it("merges directly with the sha pinned on a clean status error", async () => {
+		const { sent, result } = await run("mode: enforce", {
+			graphqlError: new Error("Pull request is in clean status"),
+		});
+		expect(sent(MERGE)).toEqual([
+			expect.objectContaining({ merge_method: "squash", sha: "head1" }),
+		]);
+		expect(result).toEqual({ approved: true, queued: true });
+	});
+
+	it("escalates status and comment on any other queue error", async () => {
+		const { sent, routes, result } = await run("mode: enforce", {
+			graphqlError: new Error("Auto merge is not allowed for this repository"),
+		});
+		expect(routes()).not.toContain(MERGE);
+		expect(
+			sent(STATUS).map((p) => (p as { state: string } | undefined)?.state),
+		).toEqual(["success", "pending"]);
+		const bodies = sent(COMMENT).map(
+			(p) => (p as { body: string } | undefined)?.body,
+		);
+		expect(bodies.at(-1)).toContain("Auto merge is not allowed");
+		expect(bodies.at(-1)).toContain("**Verdict: escalate**");
+		expect(result).toEqual({
+			approved: true,
+			queued: false,
+			skipped: "queue_failed",
+		});
+	});
+
+	it("escalates without queuing when the review POST fails with 422", async () => {
+		const { sent, graphql, result } = await run("mode: enforce", {
+			reviewError: new Error(
+				"Unprocessable Entity: Can not approve your own pull request",
+			),
+		});
+		expect(graphql).not.toHaveBeenCalled();
+		expect(sent(STATUS).at(-1)).toEqual(
+			expect.objectContaining({ state: "pending" }),
+		);
+		expect(result).toEqual({
+			approved: false,
+			queued: false,
+			skipped: "queue_failed",
+		});
 	});
 });

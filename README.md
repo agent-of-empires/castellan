@@ -15,7 +15,7 @@ While `needs-triage` is present, castellan fills only the missing priority, `are
 
 ## Acting on a verdict
 
-`mode` is read from `.castellan.yml` on the base SHA only. `off` does nothing. `shadow` posts the brief and the `castellan` status. `enforce` also approves the head SHA and enables squash auto-merge, as the GitHub App installation, and only for a `merge` verdict. A `merge` that touches `paths.protected`, `paths.release` or a file owned by `teams.protected` is downgraded to `escalate` in code. If the head moved since evaluation, nothing is approved or queued. Re-running on the same head adds no second approval and does not re-queue.
+`mode` is read from `.castellan.yml` on the base SHA only. `off` does nothing. `shadow` posts the brief and the `castellan` status. `enforce` also approves the head SHA and enables squash auto-merge, as the GitHub App installation, and only for a `merge` verdict. A `merge` that touches `paths.protected`, `paths.release`, a file owned by `teams.protected`, `.castellan.yml`, CODEOWNERS or `.github/` is downgraded to `escalate` in code. If the head moved since evaluation, nothing is approved or queued. Re-running sequentially on the same head adds no second approval and does not re-queue. There is no lock, so two concurrent deliveries on the same head can both approve. If queuing fails, the status is set back to `pending` and the comment says why. `act` is not yet wired into the entrypoint; that lands with the Lambda adapter.
 
 ## Development
 

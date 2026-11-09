@@ -19,7 +19,12 @@ export interface ActInput {
 export interface ActResult {
 	approved: boolean;
 	queued: boolean;
-	skipped?: "mode_off" | "not_merge" | "stale_head";
+	skipped?:
+		| "mode_off"
+		| "not_merge"
+		| "not_open"
+		| "stale_head"
+		| "queue_failed";
 }
 
 const ENABLE_AUTO_MERGE = `mutation($id: ID!, $oid: GitObjectID!) {
@@ -28,10 +33,13 @@ const ENABLE_AUTO_MERGE = `mutation($id: ID!, $oid: GitObjectID!) {
   }
 }`;
 
+const message = (err: unknown) =>
+	err instanceof Error ? err.message : String(err);
+
 /**
  * off: nothing. shadow: comment and status only. enforce: also approve and queue
  * a squash auto-merge, only for a `merge` verdict on a head that has not moved.
- * Safe to re-run on the same head.
+ * Safe to re-run sequentially on the same head; concurrent runs can both approve.
  */
 export async function act(
 	transport: GithubTransport,
@@ -43,32 +51,34 @@ export async function act(
 	}
 	const { owner, repo } = repoRef;
 	const { headSha } = snapshot;
+	if (brief.key.headSha !== headSha) {
+		return { approved: false, queued: false, skipped: "stale_head" };
+	}
+
+	const escalate = (rule: string, text: string): Brief => ({
+		...brief,
+		outcome: { verdict: "escalate", reasons: [{ rule, text }] },
+	});
+	const publish = async (b: Brief) => {
+		const { html_url } = await upsertComment(
+			transport,
+			repoRef,
+			pullNumber,
+			renderComment(b),
+			author,
+		);
+		await setStatus(transport, repoRef, headSha, b.outcome.verdict, html_url);
+	};
 
 	// Refuse in code even if the rules let a protected change through.
-	const final: Brief =
+	const final =
 		brief.outcome.verdict === "merge" && touchesProtected(snapshot, config, ctx)
-			? {
-					...brief,
-					outcome: {
-						verdict: "escalate",
-						reasons: [
-							{
-								rule: "protected_guard",
-								text: "touches a protected path or protected team",
-							},
-						],
-					},
-				}
+			? escalate(
+					"protected_guard",
+					"touches a protected path, protected team or governance file",
+				)
 			: brief;
-
-	const { html_url } = await upsertComment(
-		transport,
-		repoRef,
-		pullNumber,
-		renderComment(final),
-		author,
-	);
-	await setStatus(transport, repoRef, headSha, final.outcome.verdict, html_url);
+	await publish(final);
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
 	if (final.outcome.verdict !== "merge") {
@@ -79,7 +89,10 @@ export async function act(
 		"GET /repos/{owner}/{repo}/pulls/{pull_number}",
 		{ owner, repo, pull_number: pullNumber },
 	);
-	if (pr.state !== "open" || pr.merged || pr.head.sha !== headSha) {
+	if (pr.state !== "open" || pr.merged) {
+		return { approved: false, queued: false, skipped: "not_open" };
+	}
+	if (pr.head.sha !== headSha) {
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
 
@@ -87,30 +100,50 @@ export async function act(
 		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{ owner, repo, pull_number: pullNumber, per_page: 100 },
 	);
-	const approved = reviews.some(
+	let approved = reviews.some(
 		(r) =>
 			r.user?.login === author.login &&
 			r.state === "APPROVED" &&
 			r.commit_id === headSha,
 	);
-	if (!approved) {
-		await transport.request(
-			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-			{
-				owner,
-				repo,
-				pull_number: pullNumber,
-				commit_id: headSha,
-				event: "APPROVE",
-			},
-		);
+	try {
+		if (!approved) {
+			await transport.request(
+				"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+				{
+					owner,
+					repo,
+					pull_number: pullNumber,
+					commit_id: headSha,
+					event: "APPROVE",
+				},
+			);
+			approved = true;
+		}
+		if (!pr.auto_merge) {
+			try {
+				await transport.graphql(ENABLE_AUTO_MERGE, {
+					id: pr.node_id,
+					oid: headSha,
+				});
+			} catch (err) {
+				if (!message(err).includes("clean status")) throw err;
+				// Already mergeable, so there is nothing to wait for: merge now.
+				await transport.request(
+					"PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
+					{
+						owner,
+						repo,
+						pull_number: pullNumber,
+						merge_method: "squash",
+						sha: headSha,
+					},
+				);
+			}
+		}
+		return { approved: true, queued: true };
+	} catch (err) {
+		await publish(escalate("auto_merge_failed", message(err)));
+		return { approved, queued: false, skipped: "queue_failed" };
 	}
-
-	if (!pr.auto_merge) {
-		await transport.graphql(ENABLE_AUTO_MERGE, {
-			id: pr.node_id,
-			oid: headSha,
-		});
-	}
-	return { approved: true, queued: true };
 }

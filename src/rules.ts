@@ -113,33 +113,44 @@ const SKIP: Record<string, Rule> = {
 	mode_off: (_s, c) => when(c.mode === "off", "mode is off"),
 };
 
+const castellanConfig: Rule = (s) =>
+	paths(touching(s, [CONFIG_PATH]), `touches ${CONFIG_PATH}`);
+
+const codeownersFile: Rule = (s) =>
+	paths(
+		s.files.map((f) => f.path).filter((p) => CODEOWNERS_FILE.test(p)),
+		"touches CODEOWNERS",
+	);
+
+const githubDir: Rule = (s) =>
+	paths(touching(s, [".github/"]), "touches .github/");
+
+const protectedPath: Rule = (s, c) =>
+	paths(
+		touching(s, [...c.paths.protected, ...c.paths.release]),
+		"touches a protected or release path",
+	);
+
+const protectedOwner: Rule = (s, c, _r, x) => {
+	const team = c.teams.protected && slug(c.teams.protected);
+	if (!team) return [];
+	const owned = s.files
+		.map((f) => f.path)
+		.filter((p) => {
+			const rule = x.codeowners.findLast((r) => matchesPath(r.pattern, p));
+			return rule?.owners.some(
+				(o) => o.startsWith("@") && o.includes("/") && slug(o) === team,
+			);
+		});
+	return paths(owned, `owned by the protected team ${team}`);
+};
+
 const ESCALATE: Record<string, Rule> = {
-	castellan_config: (s) =>
-		paths(touching(s, [CONFIG_PATH]), `touches ${CONFIG_PATH}`),
-	codeowners_file: (s) =>
-		paths(
-			s.files.map((f) => f.path).filter((p) => CODEOWNERS_FILE.test(p)),
-			"touches CODEOWNERS",
-		),
-	github_dir: (s) => paths(touching(s, [".github/"]), "touches .github/"),
-	protected_path: (s, c) =>
-		paths(
-			touching(s, [...c.paths.protected, ...c.paths.release]),
-			"touches a protected or release path",
-		),
-	protected_owner: (s, c, _r, x) => {
-		const team = c.teams.protected && slug(c.teams.protected);
-		if (!team) return [];
-		const owned = s.files
-			.map((f) => f.path)
-			.filter((p) => {
-				const rule = x.codeowners.findLast((r) => matchesPath(r.pattern, p));
-				return rule?.owners.some(
-					(o) => o.startsWith("@") && o.includes("/") && slug(o) === team,
-				);
-			});
-		return paths(owned, `owned by the protected team ${team}`);
-	},
+	castellan_config: castellanConfig,
+	codeowners_file: codeownersFile,
+	github_dir: githubDir,
+	protected_path: protectedPath,
+	protected_owner: protectedOwner,
 	check_failing: (s) =>
 		s.checks
 			.filter((k) => ![...OK, ...PENDING].includes(k.conclusion))
@@ -215,11 +226,15 @@ const ESCALATE: Record<string, Rule> = {
 	},
 };
 
-/** True when a changed path is protected or owned by the protected team. `act` re-checks this before approving. */
+/** True when a change touches a protected path, a protected team's files, or castellan's own governance files. `act` re-checks this before approving. */
 export const touchesProtected = (s: Snapshot, c: Config, x: Context) =>
-	["protected_path", "protected_owner"].some(
-		(id) => ESCALATE[id]?.(s, c, [], x).length,
-	);
+	[
+		castellanConfig,
+		codeownersFile,
+		githubDir,
+		protectedPath,
+		protectedOwner,
+	].some((rule) => rule(s, c, [], x).length > 0);
 
 export const RULE_IDS = [...Object.keys(SKIP), ...Object.keys(ESCALATE)];
 
