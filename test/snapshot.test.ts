@@ -1,64 +1,86 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GithubTransport } from "../src/github.js";
-import { BODY_CAP, buildSnapshot, DIFF_CAP } from "../src/snapshot.js";
+import {
+	BODY_CAP,
+	buildSnapshot,
+	DIFF_CAP,
+	FILES_CAP,
+} from "../src/snapshot.js";
 
 const repo = { owner: "agent-of-empires", repo: "castellan" };
 
-function fixture(over: { body?: string | null; diff?: string } = {}) {
-	const pr = {
+interface Over {
+	body?: string | null;
+	diff?: string;
+	state?: string;
+	merged?: boolean;
+	heads?: string[];
+	files?: unknown[];
+	reviews?: unknown[];
+	checks?: unknown[];
+}
+
+const review = (login: string, state: string, commit_id = "abc") => ({
+	user: { login },
+	state,
+	commit_id,
+	body: "SECRET",
+});
+
+function fixture(over: Over = {}) {
+	const heads = [...(over.heads ?? ["abc"])];
+	const pr = () => ({
 		title: "fix: thing",
 		body: "body" in over ? over.body : "Closes #1",
 		user: { login: "alice" },
-		head: { sha: "abc" },
+		state: over.state ?? "open",
+		merged: over.merged ?? false,
+		draft: false,
+		base: { ref: "main", sha: "base1" },
+		head: { sha: heads.length > 1 ? heads.shift() : heads[0] },
 		labels: [{ name: "castellan:merge" }],
-	};
+	});
 	const request = vi.fn(
 		async (_route: string, params: { mediaType?: unknown }) => ({
-			data: params.mediaType ? (over.diff ?? "diff --git a b") : pr,
+			data: params.mediaType ? (over.diff ?? "diff --git a b") : pr(),
 		}),
 	);
-	const paginate = vi.fn(async (route: string) => {
+	const paginate = vi.fn(async (route: string, _params?: unknown) => {
 		if (route.endsWith("/files"))
-			return [
-				{ filename: "a.ts", status: "modified", additions: 2, deletions: 1 },
-			];
+			return (
+				over.files ?? [
+					{ filename: "a.ts", status: "modified", additions: 2, deletions: 1 },
+				]
+			);
 		if (route.endsWith("/reviews"))
-			return [
-				{
-					user: { login: "coderabbitai[bot]" },
-					state: "CHANGES_REQUESTED",
-					commit_id: "old",
-					body: "SECRET",
-				},
-				{
-					user: { login: "bob" },
-					state: "APPROVED",
-					commit_id: "abc",
-					body: "SECRET",
-				},
-				{
-					user: { login: "coderabbitai[bot]" },
-					state: "APPROVED",
-					commit_id: "abc",
-					body: "SECRET",
-				},
-			];
-		return [
-			{ name: "lint", conclusion: "success" },
-			{ name: "pr-title-check", conclusion: "skipped" },
-			{ name: "slow", conclusion: null },
-		];
+			return (
+				over.reviews ?? [
+					review("coderabbitai[bot]", "CHANGES_REQUESTED", "old"),
+					review("bob", "APPROVED"),
+					review("coderabbitai[bot]", "APPROVED"),
+				]
+			);
+		return (
+			over.checks ?? [
+				{ name: "lint", conclusion: "success" },
+				{ name: "pr-title-check", conclusion: "skipped" },
+				{ name: "slow", conclusion: null },
+			]
+		);
 	});
 	const transport = {
 		request,
 		paginate,
 		graphql: vi.fn(),
 	} as unknown as GithubTransport;
-	return { transport, paginate };
+	return { transport, request, paginate };
 }
 
+const snap = (over: Over = {}) =>
+	buildSnapshot(fixture(over).transport, repo, 7, "maintainer");
+
 describe("buildSnapshot", () => {
-	it("collects pr fields, every check run by name and conclusion, and the latest CodeRabbit state", async () => {
+	it("collects pr fields and every check run, mapping a null conclusion to pending", async () => {
 		const { transport, paginate } = fixture();
 		const s = await buildSnapshot(transport, repo, 7, "maintainer");
 		expect(s).toMatchObject({
@@ -66,14 +88,18 @@ describe("buildSnapshot", () => {
 			body: "Closes #1",
 			author: "alice",
 			authorClass: "maintainer",
+			draft: false,
+			baseRef: "main",
+			baseSha: "base1",
 			headSha: "abc",
+			linkedIssues: [1],
 			codeRabbit: "APPROVED",
 			files: [{ path: "a.ts", status: "modified", additions: 2, deletions: 1 }],
 		});
 		expect(s.checks).toEqual([
 			{ name: "lint", conclusion: "success" },
 			{ name: "pr-title-check", conclusion: "skipped" },
-			{ name: "slow", conclusion: null },
+			{ name: "slow", conclusion: "pending" },
 		]);
 		expect(paginate).toHaveBeenCalledWith(
 			"GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
@@ -81,37 +107,131 @@ describe("buildSnapshot", () => {
 		);
 	});
 
-	it("caps body and diff and leaves short text alone", async () => {
-		const { transport } = fixture({
+	it("requests every paginated list with per_page 100", async () => {
+		const { transport, paginate } = fixture();
+		await buildSnapshot(transport, repo, 7, "maintainer");
+		expect(paginate).toHaveBeenCalledTimes(3);
+		for (const call of paginate.mock.calls) {
+			expect(call[1]).toMatchObject({ per_page: 100 });
+		}
+	});
+
+	it("caps body and diff with truncation flags and leaves exact-cap text alone", async () => {
+		const s = await snap({
 			body: "b".repeat(BODY_CAP + 50),
 			diff: "d".repeat(DIFF_CAP + 50),
 		});
-		const s = await buildSnapshot(transport, repo, 7, "external");
-		expect(s.body).toBe(`${"b".repeat(BODY_CAP)}\n[truncated]`);
-		expect(s.diff).toBe(`${"d".repeat(DIFF_CAP)}\n[truncated]`);
-		const short = await buildSnapshot(
-			fixture({ body: "b".repeat(BODY_CAP) }).transport,
-			repo,
-			7,
-			"x",
-		);
-		expect(short.body).toBe("b".repeat(BODY_CAP));
+		expect(s.body).toBe("b".repeat(BODY_CAP));
+		expect(s.bodyTruncated).toBe(true);
+		expect(s.diff).toBe("d".repeat(DIFF_CAP));
+		expect(s.diffTruncated).toBe(true);
+		const exact = await snap({
+			body: "b".repeat(BODY_CAP),
+			diff: "d".repeat(DIFF_CAP),
+		});
+		expect(exact.bodyTruncated).toBe(false);
+		expect(exact.diffTruncated).toBe(false);
 	});
 
-	it("handles a null body and codeRabbit absent", async () => {
-		const { transport } = fixture({ body: null });
-		const s = await buildSnapshot(transport, repo, 7, "bot");
+	it("caps the file list and flags it", async () => {
+		const file = (i: number) => ({
+			filename: `f${i}`,
+			status: "added",
+			additions: 1,
+			deletions: 0,
+		});
+		const many = await snap({
+			files: Array.from({ length: FILES_CAP + 1 }, (_, i) => file(i)),
+		});
+		expect(many.files).toHaveLength(FILES_CAP);
+		expect(many.filesTruncated).toBe(true);
+		const exact = await snap({
+			files: Array.from({ length: FILES_CAP }, (_, i) => file(i)),
+		});
+		expect(exact.filesTruncated).toBe(false);
+	});
+
+	it("parses linked issues from the full body before capping", async () => {
+		const s = await snap({
+			body: `${"x".repeat(BODY_CAP)}\nFixes #12, closes #3\nResolves #12`,
+		});
+		expect(s.bodyTruncated).toBe(true);
+		expect(s.linkedIssues).toEqual([12, 3]);
+	});
+
+	it("returns an empty body and no linked issues for a null body", async () => {
+		const s = await snap({ body: null });
 		expect(s.body).toBe("");
+		expect(s.linkedIssues).toEqual([]);
 	});
 
-	it("excludes labels and review/comment bodies", async () => {
+	it("excludes labels and review bodies", async () => {
 		const { transport, paginate } = fixture();
-		const s = await buildSnapshot(transport, repo, 7, "maintainer");
-		const json = JSON.stringify(s);
+		const json = JSON.stringify(
+			await buildSnapshot(transport, repo, 7, "maintainer"),
+		);
 		expect(json).not.toContain("castellan:merge");
 		expect(json).not.toContain("SECRET");
 		expect(paginate.mock.calls.map((c) => c[0]).join()).not.toMatch(
 			/comments|labels/,
 		);
+	});
+});
+
+describe("codeRabbit state", () => {
+	it("is null when CodeRabbit never reviewed", async () => {
+		const s = await snap({ reviews: [review("bob", "APPROVED")] });
+		expect(s.codeRabbit).toBeNull();
+	});
+
+	it("is not hidden by a later COMMENTED review", async () => {
+		const s = await snap({
+			reviews: [
+				review("coderabbitai[bot]", "CHANGES_REQUESTED"),
+				review("coderabbitai[bot]", "COMMENTED"),
+			],
+		});
+		expect(s.codeRabbit).toBe("CHANGES_REQUESTED");
+	});
+});
+
+describe("reviews", () => {
+	it("keeps the commit id so approvals can be judged against the current head", async () => {
+		const s = await snap({
+			reviews: [review("bob", "APPROVED", "old"), review("eve", "APPROVED")],
+		});
+		const current = s.reviews.filter(
+			(r) => r.state === "APPROVED" && r.commitId === s.headSha,
+		);
+		expect(current.map((r) => r.login)).toEqual(["eve"]);
+	});
+});
+
+describe("guards", () => {
+	it("throws when the head moves during the snapshot", async () => {
+		await expect(snap({ heads: ["abc", "def"] })).rejects.toThrow(/head moved/);
+	});
+
+	it.each([{ state: "closed" }, { state: "open", merged: true }])(
+		"throws unless the PR is open and unmerged (%o)",
+		async (over) => {
+			await expect(snap(over)).rejects.toThrow(/not open/);
+		},
+	);
+
+	it("fails closed when a request is rejected", async () => {
+		const { transport, request } = fixture();
+		request.mockRejectedValue(new Error("406 diff too large"));
+		await expect(
+			buildSnapshot(transport, repo, 7, "maintainer"),
+		).rejects.toThrow(/406/);
+	});
+
+	it("fails closed when a paginated fetch is rejected", async () => {
+		const { transport, paginate } = fixture();
+		paginate.mockRejectedValue(new Error("502"));
+		await expect(
+			buildSnapshot(transport, repo, 7, "maintainer"),
+		).rejects.toThrow(/502/);
 	});
 });
