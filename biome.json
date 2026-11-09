@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!website", "!**/node_modules"]
+		"includes": ["**", "!website", "!**/node_modules", "!CHANGELOG.md"]
 	},
 	"formatter": {
 		"enabled": true,
