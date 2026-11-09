@@ -404,38 +404,49 @@ describe("triage", () => {
 		nothingWritten(w);
 	});
 
-	it("fails closed on an unknown option or field, writing nothing", async () => {
-		const noOption = world({
+	it("skips a project option that does not exist and comments it, writing the rest", async () => {
+		const w = world({
 			project: {
 				...project,
 				fields: {
 					nodes: [
 						field("fs", "Status", ["Ready", "Backlog"]),
-						field("fp", "Priority", ["P0", "P1", "P2", "P3"]),
-						field("fz", "Size", ["XS"]),
+						field("fp", "Priority", ["P0", "P1", "P2"]),
+						field("fz", "Size", ["XS", "S", "M", "L", "XL"]),
 					],
 				},
 			},
 		});
-		const a = await run(noOption, "mode: enforce");
-		expect(a.r).toEqual({
-			ok: false,
-			error: "unresolved",
-			detail: "option not found: Size = M",
+		const { r } = await run(w, "mode: enforce", { ...answer, priority: "P3" });
+		expect(r).toMatchObject({
+			ok: true,
+			proposal: {
+				labels: ["P3", "area:core", "bug"],
+				fields: [
+					{ field: "Size", option: "M" },
+					{ field: "Status", option: "Backlog" },
+				],
+			},
 		});
-		nothingWritten(noOption);
-
-		const noField = world();
-		const b = await run(
-			noField,
-			"mode: enforce\nproject: { sizeField: Effort }",
+		expect(w.request.mock.calls[0]?.[1]).toMatchObject({
+			labels: ["P3", "area:core", "bug"],
+		});
+		expect(sets(w.graphql).map((s) => s.field)).toEqual(["fz", "fs"]);
+		expect(commentBody(w.request)).toContain(
+			'Not set: Priority (no option "P3" in the project)',
 		);
-		expect(b.r).toEqual({
-			ok: false,
-			error: "unresolved",
-			detail: "field not found: Effort",
-		});
-		nothingWritten(noField);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
+	});
+
+	it("skips a project field that does not exist and comments it", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: enforce\nproject: { sizeField: Effort }");
+		expect(r).toMatchObject({ ok: true });
+		expect(sets(w.graphql).map((s) => s.field)).toEqual(["fp", "fs"]);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
+		expect(commentBody(w.request)).toContain(
+			"Not set: Effort (no such field in the project)",
+		);
 	});
 
 	it.each([

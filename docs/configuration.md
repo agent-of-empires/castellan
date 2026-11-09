@@ -299,7 +299,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - Runs only while the issue has `labels.needsTriage`. Skipped when `mode` is `off` or `triage.enabled` is false. When nothing is missing the label is removed.
 - Fills only what is missing: the priority label, one `area:*` label, the type label (`labels.bug` or `labels.feature`), and the project Size, Status, Priority and (features only) Roadmap fields. It never overwrites a value that is set.
 - The model must choose a priority from `triage.priority_labels` and an area from the repo's existing `area:*` labels, and both labels must exist. Sizes are `XS`, `S`, `M`, `L`, `XL`. Labels are not created.
-- Every name (project, field, option, label) is resolved before any write. A name that cannot be found fails closed with nothing written.
+- Every name is resolved before any write. A missing project field or option is skipped and named in the comment as `Not set: ...`; a missing project, label or status/roadmap mapping still fails closed with nothing written.
 - Fit is never set. `ready-for-agent` is only ever suggested in the comment, never applied.
 - No result is cached: each run on a `needs-triage` issue calls the model and posts a new comment.
 

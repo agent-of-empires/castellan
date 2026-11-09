@@ -176,7 +176,8 @@ export function escapeText(text: string): string {
 /**
  * Classifies an issue, applies the result and comments the reasons. Skipped when
  * `mode` is off or `triage.enabled` is false. Fills missing fields only, and only while
- * the needs-triage label is present. Every name is resolved before any write.
+ * the needs-triage label is present. Every name is resolved before any write; a
+ * project field or option that does not exist is skipped and named in the comment.
  * Never throws on model failure; GitHub errors propagate. With `dryRun` nothing
  * is written (no labels, fields, comment or label removal); the proposal is returned.
  */
@@ -326,21 +327,23 @@ export async function triage(
 		{ field: statusField, option: status },
 		...(isFeature && roadmap ? [{ field: roadmapField, option: roadmap }] : []),
 	];
-	const fields = wanted.filter((f) => !values.has(f.field));
+	const missing = wanted.filter((f) => !values.has(f.field));
 
+	const fields: FieldChange[] = [];
+	const notSet: string[] = [];
 	const writes: { field: string; option: string }[] = [];
-	for (const f of fields) {
+	for (const f of missing) {
 		const field = project.fields.nodes.find((n) => n.name === f.field);
 		const option = field?.options?.find((o) => o.name === f.option);
 		if (!field?.id || !option) {
-			return {
-				ok: false,
-				error: "unresolved",
-				detail: field?.id
-					? `option not found: ${f.field} = ${f.option}`
-					: `field not found: ${f.field}`,
-			};
+			notSet.push(
+				field?.id
+					? `${f.field} (no option "${f.option}" in the project)`
+					: `${f.field} (no such field in the project)`,
+			);
+			continue;
 		}
+		fields.push(f);
 		writes.push({ field: field.id, option: option.id });
 	}
 
@@ -383,6 +386,7 @@ export async function triage(
 			lines.push(`- ${k}: ${escapeText(v)}`);
 		}
 	}
+	for (const n of notSet) lines.push("", `Not set: ${n}`);
 	if (c.readyForAgent.suggest) {
 		lines.push(
 			"",
