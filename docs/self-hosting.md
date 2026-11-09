@@ -24,6 +24,8 @@ The Lambda, its role, the secret, the schedule and the AWS budget are defined in
 - Environment variables:
   - `CASTELLAN_APP_SECRET_ARN`: ARN of the secret below. Read once per container.
   - `CASTELLAN_REPOS`: comma separated list of `owner/repo` or `owner/*` (every repo of that owner the App is installed on, archived repos excluded from the sweep) the bot acts on. A repo without `.castellan.yml` gets the default `mode: shadow`, so a wildcard cannot enforce anywhere that did not opt in. Empty is a kill switch: every event and sweep is ignored.
+  - `CASTELLAN_CONFIG_SOURCE`: `repo` (default) or `central`; see [configuration](configuration.md#config-sources). `db` is not implemented yet and fails the run.
+  - `CASTELLAN_CENTRAL_CONFIG`: with `central`, `owner/repo[:path]` or `s3://bucket/key`; unset reads `<owner>/.github`, `castellan.yml`. For a git repo, add it to `CASTELLAN_REPOS`: the Lambda logs a warning at startup when it is not, because castellan then never sees PRs that edit the file. The role needs `s3:GetObject` for an S3 locator.
   - There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Role permissions: read the secret (`secretsmanager:GetSecretValue`), and for `llm.provider: bedrock` (the default) invoke the configured models on Bedrock. The Anthropic provider cannot be used on Lambda today because there is no way to pass it a key; without one the review fails closed to `escalate`.
 - An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs.
@@ -99,13 +101,14 @@ One item failing does not stop the sweep; the run exits 1 if any item failed. Ru
 
 **Inputs** (`action.yml`):
 
-| Input                                      | Meaning                                                                                                                               |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `github-token`                             | Default `github.token`.                                                                                                               |
-| `app-id`, `installation-id`, `private-key` | Act as a GitHub App instead. An App wins over the token, and its bot login comes from `GET /app`. Set all three or none.              |
-| `bot-login`                                | Token path only: the identity castellan acts as, default `github-actions[bot]`.                                                       |
-| `mode`                                     | Overrides `.castellan.yml`, which is otherwise read from the base SHA. Must be `off`, `shadow` or `enforce`.                          |
-| `anthropic-api-key`                        | Only used when `.castellan.yml` sets `llm.provider: anthropic`. The default, `bedrock`, ignores it and needs ambient AWS credentials. |
+| Input                                      | Meaning                                                                                                                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github-token`                             | Default `github.token`.                                                                                                                                               |
+| `app-id`, `installation-id`, `private-key` | Act as a GitHub App instead. An App wins over the token, and its bot login comes from `GET /app`. Set all three or none.                                              |
+| `bot-login`                                | Token path only: the identity castellan acts as, default `github-actions[bot]`.                                                                                       |
+| `mode`                                     | Overrides `.castellan.yml`, which is otherwise read from the base SHA. Must be `off`, `shadow` or `enforce`.                                                          |
+| `config-source`                            | `repo` (default), `central` or `db`. Any other value fails the run. `CASTELLAN_CONFIG_SOURCE` is the fallback. The locator is the `CASTELLAN_CENTRAL_CONFIG` env var. |
+| `anthropic-api-key`                        | Only used when `.castellan.yml` sets `llm.provider: anthropic`. The default, `bedrock`, ignores it and needs ambient AWS credentials.                                 |
 
 **Limits of the token path.** The workflow needs `contents: read`, `pull-requests: write`, `issues: write`, `statuses: write` and `checks: read` (the template sets them). A workflow token cannot approve, cannot write org project fields and cannot read org teams, so `enforce`, triage project fields and `teams.maintainers` and `teams.protected` all need an App.
 
@@ -119,10 +122,11 @@ One item failing does not stop the sweep; the run exits 1 if any item failed. Ru
 
 ```bash
 pnpm install && pnpm build
-node dist/cli/index.mjs <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]
+node dist/cli/index.mjs <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--config-source repo|central|db] [--dry-run]
 ```
 
 - Credentials: `GITHUB_TOKEN`, or `CASTELLAN_APP_ID`, `CASTELLAN_INSTALLATION_ID` and `CASTELLAN_PRIVATE_KEY` (an App wins). `CASTELLAN_BOT_LOGIN` names the identity for the token path (default `github-actions[bot]`). `ANTHROPIC_API_KEY` for `llm.provider: anthropic`.
+- `--config-source` is an alias for `CASTELLAN_CONFIG_SOURCE`; `CASTELLAN_CENTRAL_CONFIG` sets the central locator.
 - `--issue` triages an issue instead of evaluating a PR.
 - `--mode` overrides the base SHA config.
 - `--dry-run` forces `shadow` regardless of `--mode` and writes nothing to GitHub (the pipeline runs with `dryRun`, REST writes are swallowed and GraphQL mutations throw). It prints the brief it would have posted. It is the way to check a config or a prompt change against a real PR.

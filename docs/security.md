@@ -20,6 +20,8 @@ So the worst a manipulated model can do is escalate, or fail to veto a change th
 - The same check runs again inside `act` just before approving (`protected_guard`), together with `paths.protected`, `paths.release` and `teams.protected`, so a rule bug or reordering cannot let a protected change through.
 - An invalid config escalates and falls back to defaults (`shadow`), never to a more permissive state.
 
+- With `CASTELLAN_CONFIG_SOURCE=central`, the central file is read at the central repo's default branch, so branch protection on that repo is the same guarantee. A PR in the central repo that touches the central path escalates (rule `castellan_config`), so the repo must be in `CASTELLAN_REPOS`. An S3 central file has no PR path; protect it with IAM.
+
 Once a human merges a config change, it governs later PRs. Reviewing `.castellan.yml` changes is the control.
 
 ## Webhook authenticity (Lambda)

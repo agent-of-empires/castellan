@@ -2,13 +2,53 @@
 
 Policy lives in `.castellan.yml` at the repo root. The schema is `src/config.ts`; this page is derived from it.
 
-- **Where it is read from.** For a PR, from the tip of the PR's base branch (`pull_request.base.ref`), never the head, so a PR cannot loosen its own gate. For issue triage and the sweep's repo listing, from the repo's default branch.
+- **Where it is read from.** With the default `repo` source (see [Config sources](#config-sources) for the others), for a PR, from the tip of the PR's base branch (`pull_request.base.ref`), never the head, so a PR cannot loosen its own gate. For issue triage and the sweep's repo listing, from the repo's default branch.
 - **Every key is optional.** A missing file, an empty file and `{}` all mean "all defaults" (`mode: shadow`).
 - **Unknown keys are rejected**, at any depth.
 - **An invalid file fails closed.** If the file cannot be read, is not valid YAML or fails validation, the PR is escalated with rule `config_invalid` and the error as the reason. Config falls back to defaults, so nothing is approved or queued (a `mode` override from the Action input or CLI flag still applies, but an escalated PR is never approved). Triage on an invalid config throws and writes nothing.
 - **Changing the file always escalates.** See [security.md](security.md).
 
 Changes to `prompt.*` or `models.review` change the prompt hash, so the next evaluation of each open PR calls the model again.
+
+## Config sources
+
+The source is chosen per deployment, never per repo: env `CASTELLAN_CONFIG_SOURCE`, CLI `--config-source`, Action input `config-source`. Any other value fails the run.
+
+| Source    | Policy comes from                                                      |
+| --------- | ---------------------------------------------------------------------- |
+| `repo`    | `.castellan.yml` of each repo. The default.                            |
+| `central` | one YAML shared by an owner, with each repo's `.castellan.yml` on top. |
+| `db`      | Not implemented yet; selecting it fails the run, with no fallback.     |
+
+`central` reads `CASTELLAN_CENTRAL_CONFIG`, once per invocation per owner:
+
+| Value             | Reads                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| unset             | `<event owner>/.github`, file `castellan.yml`, default branch                                         |
+| `owner/repo:path` | that repo and path, default branch; `:path` is optional                                               |
+| `s3://bucket/key` | that object, using `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` and `AWS_REGION` |
+
+A missing, unreadable or invalid central file fails closed for every repo of that owner: defaults, and every PR escalates with `config_invalid` and the error as the reason. Triage throws.
+
+**Merge rules.** The central document is the lower layer and the repo file the upper. The raw documents are merged, then validated once against the schema, so built-in defaults are not a layer.
+
+- Scalars and objects: the upper layer wins per key, recursively.
+- Arrays (every array key, including `prompt.guidance` and `triage.priority_labels`): appended lower then upper, exact-string duplicates dropped, order kept.
+- `key!` in the repo file replaces instead of appending, for example `skip_branches!:`. It is rejected in the central file, which has nothing below it.
+
+```yaml
+# central: castellan.yml
+prompt:
+  guidance:
+    - Reject changes to CI workflows without a maintainer approval.
+
+# repo: .castellan.yml
+prompt:
+  guidance: # appended after the central entry
+    - Cron expressions must have a test.
+skip_branches!: # replaces, does not append
+  - release-plz-*
+```
 
 ## Keys
 
@@ -234,7 +274,7 @@ First rule with a hit decides; all hits of that one rule are listed, and the com
 | Rule id                              | Escalates when                                                                                                                                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                       |
-| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth)                                                                                                            |
+| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth), or the central config file when the PR is in the central git repo                                         |
 | `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                    |
 | `github_dir`                         | a changed path is under a `.github/` directory                                                                                                               |
 | `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                          |
