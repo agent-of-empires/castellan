@@ -14,6 +14,7 @@ limits: { maxLines: 50, maxFiles: 3, maxTopLevelDirs: 1 }
 paths: { protected: ["src/auth/**"], release: [".github/**"] }
 teams: { maintainers: org/maint, protected: org/sec }
 trustedAuthors: [klubrake]
+skip_branches: ["wip/*"]
 labels: { needsTriage: triage, bug: defect }
 project: { statusField: S, priorityField: P, sizeField: Z, roadmapField: R }
 llm: { provider: anthropic }
@@ -27,6 +28,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 				mode: "enforce",
 				limits: { maxLines: 50 },
 				trustedAuthors: ["klubrake"],
+				skip_branches: ["wip/*"],
 				prompt: { guidance: ["no em dashes"] },
 			},
 		});
@@ -44,6 +46,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 				limits: { maxLines: 100, maxFiles: 2, maxTopLevelDirs: 2 },
 				labels: { bug: "bug" },
 				trustedAuthors: ["a"],
+				skip_branches: ["release-staging/*", "release-plz-*"],
 			},
 		});
 	});

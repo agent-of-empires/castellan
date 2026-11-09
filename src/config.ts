@@ -36,6 +36,10 @@ const base = z.strictObject({
 		})
 		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
+	skip_branches: z
+		.array(z.string())
+		.default(["release-staging/*", "release-plz-*"])
+		.describe("Head branch globs that castellan never evaluates."),
 	labels: z
 		.strictObject({
 			needsTriage: z.string().default("needs-triage"),
