@@ -31,6 +31,10 @@ pnpm build   # dist/lambda/index.mjs
 2. Merging that PR tags `vX.Y.Z` and publishes a GitHub release.
 3. The release workflow builds the bundle and attaches `castellan-lambda-<version>.zip` and its `.sha256`.
 
+## Deploy
+
+Infra (Lambda, role, budget) lives in [agent-of-empires/infra](https://github.com/agent-of-empires/infra) (`aws/castellan.tf`). To ship a release, run the `Deploy` workflow (Actions, Run workflow) with the release tag. It downloads `castellan-lambda-<version>.zip`, verifies its checksum and updates the function code. Rollback is rerunning it with an older tag. The workflow only works from `main`.
+
 See [AGENTS.md](AGENTS.md) for contribution conventions.
 
 ## License
