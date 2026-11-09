@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/agent-of-empires/castellan/compare/v0.2.1...v0.3.0) (2026-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** add triage.enabled and drop the triage shadow mode ([#83](https://github.com/agent-of-empires/castellan/issues/83))
+
+### Features
+
+* **config:** add triage.enabled and drop the triage shadow mode ([#83](https://github.com/agent-of-empires/castellan/issues/83)) ([1b44038](https://github.com/agent-of-empires/castellan/commit/1b44038e14a9ea695d98893275257e4648bae398))
+
+
+### Bug Fixes
+
+* **lambda:** route issues.labeled so triage runs on needs-triage ([#81](https://github.com/agent-of-empires/castellan/issues/81)) ([68a9889](https://github.com/agent-of-empires/castellan/commit/68a98896b5125e8b341701b3f6c0dea23e997c3d))
+* **llm:** add sonnet 4.6 and haiku 4.5 to the price table ([#80](https://github.com/agent-of-empires/castellan/issues/80)) ([a228c2c](https://github.com/agent-of-empires/castellan/commit/a228c2cd830fd93ff55a8c8ad997614401f50a92))
+
 ## [0.2.1](https://github.com/agent-of-empires/castellan/compare/v0.2.0...v0.2.1) (2026-11-09)
 
 
