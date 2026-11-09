@@ -13,6 +13,7 @@
 	"packageManager": "pnpm@10.33.0",
 	"scripts": {
 		"build": "node scripts/build.mjs",
+		"check:bundles": "node scripts/check-bundles.mjs",
 		"eval": "node dist/eval.mjs",
 		"test:bundle": "node --input-type=module -e \"const m = await import('./dist/lambda/index.mjs'); if (typeof m.handler !== 'function') throw new Error('no handler export')\"",
 		"lint": "biome check .",
