@@ -215,6 +215,12 @@ const ESCALATE: Record<string, Rule> = {
 	},
 };
 
+/** True when a changed path is protected or owned by the protected team. `act` re-checks this before approving. */
+export const touchesProtected = (s: Snapshot, c: Config, x: Context) =>
+	["protected_path", "protected_owner"].some(
+		(id) => ESCALATE[id]?.(s, c, [], x).length,
+	);
+
 export const RULE_IDS = [...Object.keys(SKIP), ...Object.keys(ESCALATE)];
 
 /** Deny by default; first rule that hits decides. `candidate` still needs the model. */
