@@ -9,7 +9,7 @@ Castellan can approve and merge, so the design keeps a model, a PR author and a 
 - Rules run first and decide. In `enforce` a rule escalation never reaches the model. In `shadow` the model also reviews it, but only as advice shown in the brief; the verdict stays the rules'.
 - Only a PR that passed every rule becomes a `candidate`. The model can turn a candidate into `escalate` (`intent_match` false, `new_behavior` true, or a `blocker` finding). It has no output that means "merge".
 - A missing key, a missing price, a timeout, an SDK error or unparsable output all escalate. A failed review is never cached.
-- The model reply is parsed against a strict schema: two booleans and a list of findings. Anything else is `invalid_output`.
+- The model reply is parsed against a schema: two booleans and a list of findings (unknown keys inside a finding are dropped). Anything else is `invalid_output`.
 
 So the worst a manipulated model can do is escalate, or fail to veto a change the rules already allowed.
 
