@@ -165,7 +165,7 @@ llm:
 
 With `bedrock`, a model id must start with `anthropic.`, `us.` or `global.`, or the config is invalid.
 
-Only the four default ids above have a built in price. Any other model id fails every call with the `budget` reason ("no price for model"), so PRs escalate with `llm_unavailable` and triage reports an error. No shipped entrypoint accepts a price override.
+Only these ids have a built in price: the four defaults above, `us.anthropic.claude-sonnet-4-6`, `claude-sonnet-4-6`, `us.anthropic.claude-haiku-4-5-20251001-v1:0` and `claude-haiku-4-5-20251001-v1:0`. Any other model id fails every call with the `budget` reason ("no price for model"), so PRs escalate with `llm_unavailable` and triage reports an error. No shipped entrypoint accepts a price override.
 
 ```yaml
 models:
