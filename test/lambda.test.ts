@@ -278,6 +278,22 @@ describe("routing", () => {
 		expect(evaluatePull).not.toHaveBeenCalled();
 	});
 
+	it("issues labeled by castellan itself is ignored, by a human or another label is not", async () => {
+		await run("issues", {
+			action: "labeled",
+			issue: { number: 16 },
+			sender: { login: "castellan[bot]" },
+		});
+		expect(triageIssue).not.toHaveBeenCalled();
+		await run("issues", {
+			action: "labeled",
+			issue: { number: 17 },
+			label: { name: "bug" },
+			sender: { login: "alice" },
+		});
+		expect(vi.mocked(triageIssue).mock.calls.map((c) => c[2])).toEqual([17]);
+	});
+
 	it("issues labeled on a closed issue or a pull request is ignored", async () => {
 		await run("issues", {
 			action: "labeled",

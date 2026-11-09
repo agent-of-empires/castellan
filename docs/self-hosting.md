@@ -111,7 +111,7 @@ One item failing does not stop the sweep; the run exits 1 if any item failed. Ru
 
 **Fork PRs.** `pull_request_target` is refused in code, because it would give write secrets to fork code. A `pull_request` from a fork does nothing (its token is read only); the next sweep evaluates it.
 
-**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. A label added with `github.token` does not start other workflows, so the sweep is what triages it.
+**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. In the Action, a label added with `github.token` does not start other workflows, so the sweep is what triages it. The Lambda triages on the `issues.labeled` event.
 
 **Cost of running it.** The composite action runs `pnpm install` and `pnpm build` on every run, and sets up Node 22, which replaces the caller's Node version. Move to a release built `dist` if either matters. The template pins a release (`@v0.1.0`).
 

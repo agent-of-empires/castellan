@@ -46,6 +46,7 @@ interface Payload {
 		pull_requests: { number: number; base: { repo: { id: number } } }[];
 	};
 	issue?: { number: number; state?: string; pull_request?: object };
+	sender?: { login: string };
 	sha?: string;
 	context?: string;
 }
@@ -212,7 +213,9 @@ export function createHandler(deps: Deps) {
 		const issue = p.issue?.number;
 		const jobs: Job[] =
 			name === "issues" &&
-			(p.action === "opened" || p.action === "labeled") &&
+			(p.action === "opened" ||
+				// Our own label writes would each start another triage run.
+				(p.action === "labeled" && p.sender?.login !== e.login)) &&
 			issue &&
 			p.issue?.state !== "closed" &&
 			!p.issue?.pull_request
