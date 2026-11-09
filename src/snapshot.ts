@@ -52,20 +52,21 @@ function linkedIssues(body: string): number[] {
 /**
  * Text-only view of a PR for the rules and the model. Nothing is checked out.
  * Labels and comments are never fetched, so castellan-set labels and human
- * comment bodies cannot leak in. Throws if the PR is not open or its head moves
- * while the snapshot is built.
+ * comment bodies cannot leak in. Throws if the PR is not open (unless
+ * `allowClosed`, used by eval replay) or its head moves while the snapshot is built.
  */
 export async function buildSnapshot(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
 	pullNumber: number,
 	authorClass: AuthorClass,
+	{ allowClosed = false } = {},
 ): Promise<Snapshot> {
 	const pull = { owner, repo, pull_number: pullNumber };
 	const getPull = () =>
 		transport.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", pull);
 	const { data: pr } = await getPull();
-	if (pr.state !== "open" || pr.merged) {
+	if (!allowClosed && (pr.state !== "open" || pr.merged)) {
 		throw new Error(`PR #${pullNumber} is not open`);
 	}
 	const headSha = pr.head.sha;
