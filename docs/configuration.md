@@ -17,7 +17,7 @@ Changes to `prompt.*` or `models.review` change the prompt hash, so the next eva
 `off | shadow | enforce`. Default `shadow`.
 
 - `off`: nothing is evaluated, posted or written. PRs are skipped, triage returns "off".
-- `shadow`: posts the brief and the `castellan` commit status, which is always `success` ("shadow: would merge" or "shadow: would escalate (<first reason>)"). The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Triage comments a proposal. Nothing is approved, merged, labeled or written to a project.
+- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Triage comments a proposal. Nothing is approved, merged, labeled or written to a project.
 - `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict; triage applies labels and project fields and removes `needs-triage`.
 
 The GitHub Action input `mode` and the CLI `--mode` flag override this key. Any value other than the three above fails the run.
@@ -216,7 +216,7 @@ First rule with a hit decides; all hits of that one rule are listed, and the com
 
 **Skip (nothing is posted):** `draft`, `skipped_author` (only `dependabot[bot]`), `non_default_base`, `skip_branch`, `mode_off`.
 
-**Wait (`ci_unsettled`):** CI has not settled when a required check has no run on the head SHA, or any check run is pending, queued or in progress. Nothing is posted and the model is not called; the `castellan` status is `pending` with "castellan: waiting for CI" ("shadow: waiting for CI" in `shadow`). The PR is evaluated again on `check_suite` completed, on `status` events and by the sweep, with no wait ceiling.
+**Wait (`ci_unsettled`):** CI has not settled when a required check has no run on the head SHA, or any check run is pending, queued or in progress. Nothing is posted and the model is not called; the `castellan` status is `pending` with "castellan: waiting for CI" ("shadow: waiting for CI" in `shadow`). On the Lambda the PR is evaluated again on `check_suite` completed, on `status` events and by the sweep, with no wait ceiling. The GitHub Action has no `check_suite` or `status` trigger, and its own job is in progress on the head during a `pull_request` run, so an Action install stays waiting until the scheduled run.
 
 **Escalate, in order:**
 
@@ -263,7 +263,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - One sticky comment per PR, found by the hidden marker `<!-- castellan` and by being authored by the App (or the token's bot login). It is edited in place, never duplicated. The verdict is the first line, the machine readable state block is always last, and the body stays under 65,000 characters (findings are dropped first).
 - Brief layout: verdict line (with `(shadow)` in shadow), up to 3 reasons, Model review (or one line "Model: not run (rules decided)"), a collapsed Checks table and a collapsed Provenance list. The table is deduped by check name keeping the newest run (highest check run id), with failed, pending and skipped rows first. At most 3 reasons, 500 characters per reason, 50 rows in the check table. Provenance says whether the model was not run, `fresh` or cached from a sha.
 - Reasons that quote model or PR text are made inert: no `@` mentions, links, URLs, HTML or dashes.
-- Commit status context is `castellan`. In `enforce`, `merge` sets `success` ("castellan: merge") and `escalate` sets `pending` ("castellan: escalated to a human"). In `shadow` it is always `success`, because `pending` reads as "waiting for status to be reported". It is never set to `failure`, so an escalation waits for a human instead of blocking.
+- Commit status context is `castellan`. In `enforce`, `merge` sets `success` ("castellan: merge") and `escalate` sets `pending` ("castellan: escalated to a human"). In `shadow` it is `success` for both verdicts, because `pending` reads as "waiting for status to be reported", and `pending` ("shadow: waiting for CI") only while CI is unsettled. It is never set to `failure`, so an escalation waits for a human instead of blocking.
 - On an unexpected error after the head SHA is known, the status is set to `pending` ("castellan: internal error"; `success` "shadow: internal error" in `shadow`) so a stale verdict cannot stay.
 - Escalate does not request reviewers or assign a team. The brief has a place for an owner team, but nothing fills it today.
 

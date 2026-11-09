@@ -87,7 +87,7 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 The code is the reference. Where [RFC agent-of-empires#5502](https://github.com/agent-of-empires/agent-of-empires/issues/5502) differs:
 
 - Escalation does not request the CODEOWNERS team. It posts the brief and, in `enforce`, sets the status to `pending`.
-- Shadow mode always sets the status to `success` with a "shadow: would merge" or "shadow: would escalate" description, so a stuck-looking `pending` never appears. It blocks nothing either way: castellan is not a required check.
+- Shadow mode sets the status to `success` with a "shadow: would merge" or "shadow: would escalate" description for a verdict, and to `pending` with "shadow: waiting for CI" while CI is unsettled. It blocks nothing either way: castellan is not a required check.
 - The RFC's "protected and release CODEOWNERS paths" are two config lists (`paths.protected`, `paths.release`) plus files owned by `teams.protected`, not every CODEOWNERS entry.
 - The monthly budget is infra, not code (see above); the per call cap exists but is not wired.
 - The kill switches are `mode: off` and an empty `CASTELLAN_REPOS`.
