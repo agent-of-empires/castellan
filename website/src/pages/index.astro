@@ -1,0 +1,70 @@
+---
+import Base from "../layouts/Base.astro";
+
+const repo = "https://github.com/agent-of-empires/castellan";
+const rfc = "https://github.com/agent-of-empires/agent-of-empires/issues/5502";
+const config = `mode: shadow          # off | shadow | enforce
+limits:
+  maxLines: 100
+  maxFiles: 5
+  maxTopLevelDirs: 2
+paths:
+  protected: ["src/auth/"]
+  release: ["Cargo.toml"]
+teams:
+  maintainers: maintainers
+  protected: security
+trustedAuthors: ["octocat"]
+llm:
+  provider: bedrock     # or anthropic
+prompt:
+  guidance:
+    - Prefer small, focused changes.`;
+---
+
+<Base
+	title="Castellan: merge gate and issue triage bot for GitHub"
+	description="Castellan is a stateless merge gate and issue triage bot for GitHub. Rules decide; the model can only veto."
+>
+	<h1>Castellan</h1>
+	<p>
+		A merge gate and issue triage bot for GitHub. Rules decide; a model can
+		only veto a <code>merge</code>, never grant one. GitHub is the only state
+		store: castellan keeps nothing between events. GitHub is the only
+		supported provider today.
+	</p>
+	<p>
+		<a href={repo}>Repository</a> · <a href={rfc}>RFC agent-of-empires#5502</a>
+	</p>
+
+	<h2>How it decides</h2>
+	<p>Castellan re-evaluates a PR from scratch on every event and posts one brief with a verdict.</p>
+	<ol>
+		<li><strong>Skip.</strong> Drafts, dependabot, non-default bases, skipped branches and <code>mode: off</code> are not evaluated.</li>
+		<li><strong>Rules.</strong> Protected or release paths, migrations, failing or missing checks, CodeRabbit changes requested and size limits escalate to a human.</li>
+		<li><strong>Model review.</strong> Only a PR that passed every rule is reviewed. The model can turn a candidate into <code>escalate</code>; a failed review also escalates.</li>
+		<li><strong>Act.</strong> <code>shadow</code> posts the brief and a <code>castellan</code> status. <code>enforce</code> also approves the head SHA and enables squash auto-merge, only for <code>merge</code>.</li>
+	</ol>
+	<p>
+		Config is read from <code>.castellan.yml</code> on the base commit only, so a PR cannot loosen its own gate.
+	</p>
+
+	<h2>Triage</h2>
+	<p>
+		While an issue carries <code>needs-triage</code>, castellan fills the missing
+		priority, <code>area:*</code> and type labels and the project Size, Status and
+		Priority fields. In <code>shadow</code> it comments the proposal; in <code>enforce</code> it applies it.
+	</p>
+
+	<h2>.castellan.yml</h2>
+	<p>Every key is optional. Unknown keys are rejected and the PR escalates.</p>
+	<pre><code>{config}</code></pre>
+
+	<h2>Self-host</h2>
+	<ul>
+		<li><strong>Lambda:</strong> each release attaches <code>castellan-lambda-&lt;version&gt;.zip</code> and its checksum. Infra lives in <a href="https://github.com/agent-of-empires/infra">agent-of-empires/infra</a>.</li>
+		<li><strong>Action:</strong> copy <a href={`${repo}/blob/main/templates/needs-triage.yml`}>templates/needs-triage.yml</a> into <code>.github/workflows/</code> to label new issues.</li>
+		<li><strong>CLI:</strong> <code>pnpm eval</code> replays closed PRs and reports how often a <code>merge</code> verdict matched what humans did.</li>
+	</ul>
+	<p>See the <a href={`${repo}#readme`}>README</a> for details.</p>
+</Base>

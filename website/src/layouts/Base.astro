@@ -1,0 +1,44 @@
+---
+interface Props {
+	title: string;
+	description: string;
+}
+const { title, description } = Astro.props;
+const repo = "https://github.com/agent-of-empires/castellan";
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="canonical" href={new URL(Astro.url.pathname, Astro.site)} />
+		<style>
+			:root { color-scheme: light dark; }
+			body { font: 16px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem; }
+			nav, footer { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+			nav { justify-content: space-between; margin-bottom: 3rem; }
+			nav a:first-child { font-weight: 700; text-decoration: none; }
+			h2 { margin-top: 2.5rem; }
+			pre { overflow-x: auto; padding: 1rem; border-radius: 6px; background: color-mix(in srgb, currentColor 8%, transparent); }
+			code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+			footer { margin-top: 4rem; font-size: 0.9em; }
+		</style>
+	</head>
+	<body>
+		<nav>
+			<a href="/">Castellan</a>
+			<span>
+				<a href={repo}>GitHub</a>
+			</span>
+		</nav>
+		<main><slot /></main>
+		<footer>
+			<a href={repo}>Repository</a>
+			<a href="https://github.com/agent-of-empires/agent-of-empires/issues/5502">RFC #5502</a>
+			<span>Part of the Agent of Empires project. MIT licensed.</span>
+		</footer>
+	</body>
+</html>
