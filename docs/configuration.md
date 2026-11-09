@@ -69,7 +69,7 @@ paths:
 | `teams.maintainers` | team slug               | unset   | author class `maintainer`: the PR author is an active member                                                 |
 | `teams.protected`   | team slug or `org/slug` | unset   | rule `protected_owner`: any changed file whose last matching CODEOWNERS rule names `@<org>/<slug>` escalates |
 
-The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation throws before any comment or status is written (the Lambda logs it, the Action and CLI exit 1) rather than treating the author as a non-member.
+The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation fails closed: the `castellan` status on the head is set to escalate with the description `castellan: internal error` and the error is rethrown (logged on the Lambda, exit 1 for the Action and CLI). The author is never silently treated as a non-member.
 
 `teams.protected` is the only thing that makes castellan read CODEOWNERS, from the base commit, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. Only owners written as `@org/team` are compared; individual users never match.
 
