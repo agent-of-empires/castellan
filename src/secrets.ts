@@ -25,5 +25,12 @@ export async function loadSecrets(
 	const { SecretString } = await client.send(
 		new GetSecretValueCommand({ SecretId: arn }),
 	);
-	return schema.parse(JSON.parse(SecretString ?? ""));
+	let json: unknown;
+	try {
+		json = JSON.parse(SecretString ?? "");
+	} catch {
+		// The parser error quotes the input; the secret must not reach the logs.
+		throw new Error("secret is not valid JSON");
+	}
+	return schema.parse(json);
 }

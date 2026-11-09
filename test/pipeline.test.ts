@@ -101,7 +101,9 @@ function world({
 describe("evaluatePull", () => {
 	it("approves and queues a merge verdict in enforce mode", async () => {
 		const w = world();
-		expect(await evaluatePull(w.env, repo, 3)).toBe("acted");
+		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
+			status: "acted",
+		});
 		expect(w.create).toHaveBeenCalledTimes(1);
 		expect(w.routes()).toContain(COMMENT);
 		expect(w.routes()).toContain(STATUS);
@@ -123,20 +125,26 @@ describe("evaluatePull", () => {
 
 	it("posts nothing for a skipped PR and never calls the model", async () => {
 		const w = world({ draft: true });
-		expect(await evaluatePull(w.env, repo, 3)).toBe("skipped");
+		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
+			status: "skipped",
+		});
 		expect(w.routes()).not.toContain(COMMENT);
 		expect(w.create).not.toHaveBeenCalled();
 	});
 
 	it("ignores a closed PR", async () => {
 		const w = world({ state: "closed" });
-		expect(await evaluatePull(w.env, repo, 3)).toBe("closed");
+		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
+			status: "closed",
+		});
 		expect(w.create).not.toHaveBeenCalled();
 	});
 
 	it("escalates on an invalid config in shadow mode, with no model call or approval", async () => {
 		const w = world({ yaml: "mode: nonsense" });
-		expect(await evaluatePull(w.env, repo, 3)).toBe("acted");
+		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
+			status: "acted",
+		});
 		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
 			?.body as string;
 		expect(body).toContain("Verdict: escalate");
@@ -149,6 +157,92 @@ describe("evaluatePull", () => {
 		w.create.mockRejectedValue(new Error("down"));
 		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+});
+
+describe("mode off", () => {
+	it("exits before the snapshot, team lookup and checks", async () => {
+		const w = world({ yaml: "mode: off\nteams:\n  maintainers: m" });
+		expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "skipped" });
+		expect(w.paginate).not.toHaveBeenCalled();
+		expect(w.routes()).not.toContain(
+			"GET /orgs/{org}/teams/{team_slug}/memberships/{username}",
+		);
+		expect(w.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("fail closed", () => {
+	it("sets a pending status and rethrows when a step after the snapshot throws", async () => {
+		const w = world();
+		const base = w.paginate.getMockImplementation();
+		w.paginate.mockImplementation(async (route: string) => {
+			if (route.includes("/rules/branches/")) throw new Error("boom");
+			return (base ? base(route) : []) as unknown[];
+		});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("boom");
+		expect(w.request).toHaveBeenCalledWith(
+			STATUS,
+			expect.objectContaining({
+				sha: "head1",
+				context: "castellan",
+				state: "pending",
+				description: "castellan: internal error",
+			}),
+		);
+		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("also covers an act failure", async () => {
+		const w = world();
+		const base = w.request.getMockImplementation();
+		w.request.mockImplementation(async (route, params) => {
+			if (route === COMMENT) throw new Error("comment down");
+			return (base ? base(route, params) : { data: {} }) as never;
+		});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("comment down");
+		expect(
+			w.request.mock.calls.filter(
+				([r, p]) =>
+					r === STATUS &&
+					(p as { description?: string }).description ===
+						"castellan: internal error",
+			),
+		).toHaveLength(1);
+	});
+
+	it("still rethrows the original error if the status write fails", async () => {
+		const w = world();
+		const base = w.request.getMockImplementation();
+		w.request.mockImplementation(async (route, params) => {
+			if (route === COMMENT) throw new Error("comment down");
+			if (route === STATUS) throw new Error("status down");
+			return (base ? base(route, params) : { data: {} }) as never;
+		});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("comment down");
+	});
+});
+
+describe("dryRun", () => {
+	it("returns the brief and writes nothing", async () => {
+		const w = world();
+		const res = await evaluatePull(w.env, repo, 3, { dryRun: true });
+		expect(res.status).toBe("dry_run");
+		expect(res.brief?.outcome.verdict).toBe("merge");
+		expect(res.act).toBeUndefined();
+		for (const r of [COMMENT, STATUS, APPROVE]) {
+			expect(w.routes()).not.toContain(r);
+		}
+		expect(w.graphql).not.toHaveBeenCalled();
+	});
+
+	it("does not set a failure status either", async () => {
+		const w = world();
+		w.create.mockRejectedValue(new Error("down"));
+		const res = await evaluatePull(w.env, repo, 3, { dryRun: true });
+		expect(res.brief?.outcome.verdict).toBe("escalate");
+		expect(w.routes()).not.toContain(STATUS);
 	});
 });
 

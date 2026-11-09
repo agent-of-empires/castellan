@@ -24,9 +24,15 @@ While `needs-triage` is present, castellan fills only the missing priority, `are
 - `CASTELLAN_APP_SECRET_ARN`: Secrets Manager JSON with `app_id`, `installation_id`, `private_key`, `webhook_secret`. Read once per container.
 - `CASTELLAN_REPOS`: comma list of `owner/repo` the bot acts on. Empty is a kill switch: every event and sweep is ignored.
 
-Routed webhooks: `pull_request` (opened, synchronize, reopened, ready_for_review), `check_suite` and `check_run` (completed), `pull_request_review` (submitted), `status`, and `issues` (opened, triage). Castellan's own `castellan` status and its own approvals are ignored so they cannot re-trigger it. The `{"source":"sweep"}` EventBridge event runs the same pipeline over every open PR and `needs-triage` issue in `CASTELLAN_REPOS`. The App login used to find its own comment and approval is `<slug>[bot]` from `GET /app`.
+Routed webhooks: `pull_request` (opened, synchronize, reopened, ready_for_review), `check_suite` (completed), `pull_request_review` (submitted), `status`, and `issues` (opened, triage). `check_run` is not routed: it fires once per check, so a CI run would start many parallel evaluations of one head; `check_suite` fires once. A `check_suite` with no attached PR (fork PRs) is mapped to PRs by head SHA. Castellan's own `castellan` status and its own approvals are ignored so they cannot re-trigger it. The `{"source":"sweep"}` EventBridge event runs the same pipeline over every open PR and `needs-triage` issue in `CASTELLAN_REPOS`, three at a time, and stops starting work when under 40 seconds remain. The App login used to find its own comment and approval is `<slug>[bot]` from `GET /app`.
 
-The SDKs are bundled, not externalized, so the zip does not depend on the Lambda runtime's SDK version.
+Responses: 401 for a bad signature, 400 for a signed body that is not JSON, 500 only for infrastructure failures (secrets, GitHub connection); a failing PR or issue is logged and returns 200. If anything fails after the PR head is known, the `castellan` status is set to `pending` ("internal error") so a stale `success` cannot stay.
+
+GitHub marks a webhook delivery as timed out after 10 seconds. The Lambda keeps running and finishes the work; the delivery just shows as failed in GitHub.
+
+`llm.provider: anthropic` needs an API key, and the Lambda has none today (only Bedrock works). Without one the review fails closed to `escalate`.
+
+The handler lives in `src/lambda.ts`, the per-PR pipeline in `src/pipeline.ts`. The SDKs are bundled, not externalized, so the zip does not depend on the Lambda runtime's SDK version. The bundle ships no sourcemap. `pnpm test:bundle` imports `dist/lambda/index.mjs` as a real ES module after `pnpm build`.
 
 ## Eval
 

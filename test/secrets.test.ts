@@ -31,6 +31,13 @@ describe("loadSecrets", () => {
 		).rejects.toThrow();
 	});
 
+	it("does not leak the secret text when it is not JSON", async () => {
+		const err = await loadSecrets("arn:x", client("hunter2-not-json")).catch(
+			(e) => e,
+		);
+		expect(String(err)).toBe("Error: secret is not valid JSON");
+	});
+
 	it("rejects a binary secret", async () => {
 		await expect(loadSecrets("arn:x", client())).rejects.toThrow();
 	});

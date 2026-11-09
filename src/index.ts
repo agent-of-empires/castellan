@@ -7,7 +7,7 @@ export const handler = createHandler({
 		.split(",")
 		.map((r) => r.trim())
 		.filter(Boolean),
-	loadSecrets() {
+	async loadSecrets() {
 		const arn = process.env.CASTELLAN_APP_SECRET_ARN;
 		if (!arn) throw new Error("CASTELLAN_APP_SECRET_ARN is not set");
 		return loadSecrets(arn);

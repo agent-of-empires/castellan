@@ -228,6 +228,27 @@ describe("triage", () => {
 		expect(routes(w.request)).not.toContain("ready-for-agent");
 	});
 
+	it("dryRun returns the proposal and writes nothing, even in enforce", async () => {
+		const w = world();
+		const m = llm(answer);
+		const r = await triage(
+			issue,
+			await cfg("mode: enforce"),
+			w.transport,
+			repo,
+			{ client: m.client },
+			{ dryRun: true },
+		);
+		expect(r).toMatchObject({
+			ok: true,
+			mode: "enforce",
+			proposal: { labels: ["P1", "area:core", "bug"] },
+		});
+		expect(w.request).not.toHaveBeenCalled();
+		expect(sets(w.graphql)).toEqual([]);
+		expect(w.log).toEqual([]);
+	});
+
 	it("keeps needs-triage when a write fails", async () => {
 		const w = world({ failSet: true });
 		await expect(run(w, "mode: enforce")).rejects.toThrow("boom");

@@ -74,6 +74,25 @@ describe("signature", () => {
 		).toBe(401);
 	});
 
+	it("rejects a valid signature replayed with a different body", async () => {
+		const { handler } = setup();
+		const signed = hook("pull_request", {
+			action: "opened",
+			repository,
+			pull_request: { number: 1 },
+		});
+		const tampered = {
+			...signed,
+			body: JSON.stringify({
+				action: "opened",
+				repository,
+				pull_request: { number: 999 },
+			}),
+		};
+		expect((await handler(tampered)).statusCode).toBe(401);
+		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+
 	it("verifies the raw bytes of a base64 body", async () => {
 		const { handler } = setup();
 		const res = await handler(hook("pull_request", {}, { base64: true }));
@@ -153,18 +172,48 @@ describe("routing", () => {
 		expect(pulls()).toEqual([6]);
 	});
 
-	it.each(["check_suite", "check_run"])(
-		"%s completed routes every attached PR",
-		async (name) => {
-			const attached = { pull_requests: [{ number: 7 }, { number: 8 }] };
-			await run(name, {
+	it("check_suite completed routes every attached PR", async () => {
+		const check_suite = {
+			head_sha: "abc",
+			pull_requests: [{ number: 7 }, { number: 8 }],
+		};
+		await run("check_suite", { action: "completed", check_suite });
+		await run("check_suite", { action: "requested", check_suite });
+		expect(pulls()).toEqual([7, 8]);
+	});
+
+	it("check_suite from a fork finds PRs by head sha", async () => {
+		const s = setup();
+		s.transport.paginate.mockResolvedValue([
+			{ number: 21, state: "open", head: { sha: "forkhead" } },
+			{ number: 22, state: "open", head: { sha: "other" } },
+		]);
+		await s.handler(
+			hook("check_suite", {
+				repository,
 				action: "completed",
-				[name]: attached,
-			});
-			await run(name, { action: "created", [name]: attached });
-			expect(pulls()).toEqual([7, 8]);
-		},
-	);
+				check_suite: { head_sha: "forkhead", pull_requests: [] },
+			}),
+		);
+		expect(pulls()).toEqual([21]);
+		expect(s.transport.paginate).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls",
+			expect.objectContaining({
+				owner: "o",
+				repo: "r",
+				commit_sha: "forkhead",
+			}),
+		);
+	});
+
+	it("check_run is not routed", async () => {
+		const { res } = await run("check_run", {
+			action: "completed",
+			check_run: { pull_requests: [{ number: 7 }] },
+		});
+		expect(res.body).toMatch(/^ignored/);
+		expect(pulls()).toEqual([]);
+	});
 
 	it("status looks up open PRs on that head", async () => {
 		const s = setup();
@@ -189,9 +238,16 @@ describe("routing", () => {
 	});
 
 	it("issues opened triages, other actions do not", async () => {
-		await run("issues", { action: "opened", issue: { number: 11 } });
+		const { res } = await run("issues", {
+			action: "opened",
+			issue: { number: 11 },
+		});
 		await run("issues", { action: "labeled", issue: { number: 12 } });
-		expect(vi.mocked(triageIssue).mock.calls.map((c) => c[2])).toEqual([11]);
+		expect(res.statusCode).toBe(200);
+		expect(vi.mocked(triageIssue).mock.calls.map((c) => [c[1], c[2]])).toEqual([
+			[{ owner: "o", repo: "r" }, 11],
+		]);
+		expect(evaluatePull).not.toHaveBeenCalled();
 	});
 
 	it("ignores unrouted events", async () => {
@@ -200,14 +256,27 @@ describe("routing", () => {
 		expect(evaluatePull).not.toHaveBeenCalled();
 	});
 
-	it("returns 500 when a job throws", async () => {
+	it("returns 200 when a job throws; the failure is only logged", async () => {
 		vi.mocked(evaluatePull).mockRejectedValueOnce(new Error("boom"));
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const { res } = await run("pull_request", {
 			action: "opened",
 			pull_request: { number: 1 },
 		});
-		expect(res.statusCode).toBe(500);
+		expect(res).toEqual({ statusCode: 200, body: "ok failed=1 skipped=0" });
+	});
+
+	it("returns 400 for a correctly signed body that is not json", async () => {
+		const { handler } = setup();
+		const body = "{nope";
+		const res = await handler({
+			headers: {
+				"x-github-event": "pull_request",
+				"x-hub-signature-256": sign(body),
+			},
+			body,
+		});
+		expect(res.statusCode).toBe(400);
 	});
 });
 
@@ -231,6 +300,89 @@ describe("sweep", () => {
 		const res = await handler({ source: "sweep" });
 		expect(res.statusCode).toBe(500);
 		expect(evaluatePull).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("deadline and concurrency", () => {
+	const pullsOf = (n: number) =>
+		vi.mocked(listWork).mockResolvedValueOnce({
+			pulls: Array.from({ length: n }, (_, i) => i + 1),
+			issues: [],
+		});
+
+	it("stops starting jobs when the remaining time runs low", async () => {
+		pullsOf(6);
+		const ctx = {
+			getRemainingTimeInMillis: () =>
+				vi.mocked(evaluatePull).mock.calls.length >= 2 ? 10_000 : 100_000,
+		};
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler } = setup();
+		const res = await handler({ source: "sweep" }, ctx);
+		expect(res.statusCode).toBe(200);
+		expect(evaluatePull).toHaveBeenCalledTimes(2);
+	});
+
+	it("starts nothing when already out of time", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler } = setup();
+		await handler(
+			{ source: "sweep" },
+			{ getRemainingTimeInMillis: () => 5_000 },
+		);
+		expect(listWork).not.toHaveBeenCalled();
+		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+
+	it("runs at most 3 jobs at once", async () => {
+		pullsOf(8);
+		let live = 0;
+		let peak = 0;
+		vi.mocked(evaluatePull).mockImplementation(async () => {
+			peak = Math.max(peak, ++live);
+			await new Promise((r) => setTimeout(r, 5));
+			live--;
+			return { status: "acted" };
+		});
+		const { handler } = setup();
+		await handler({ source: "sweep" }, { getRemainingTimeInMillis: () => 1e6 });
+		expect(evaluatePull).toHaveBeenCalledTimes(8);
+		expect(peak).toBe(3);
+	});
+});
+
+describe("infrastructure failures", () => {
+	const event = () =>
+		hook("pull_request", {
+			action: "opened",
+			repository,
+			pull_request: { number: 1 },
+		});
+
+	it("returns 500, not a throw, and retries the secret load next time", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler, deps } = setup();
+		vi.mocked(deps.loadSecrets).mockRejectedValueOnce(new Error("sm down"));
+		expect((await handler(event())).statusCode).toBe(500);
+		expect((await handler(event())).statusCode).toBe(200);
+		expect(deps.loadSecrets).toHaveBeenCalledTimes(2);
+	});
+
+	it("retries a failed connect too", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { handler, deps } = setup();
+		vi.mocked(deps.connect).mockRejectedValueOnce(new Error("app down"));
+		expect((await handler(event())).statusCode).toBe(500);
+		expect((await handler(event())).statusCode).toBe(200);
+		expect(deps.loadSecrets).toHaveBeenCalledTimes(1);
+		expect(deps.connect).toHaveBeenCalledTimes(2);
+	});
+
+	it("a failed sweep listing is a 500", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.mocked(listWork).mockRejectedValueOnce(new Error("gh down"));
+		const { handler } = setup();
+		expect((await handler({ source: "sweep" })).statusCode).toBe(500);
 	});
 });
 

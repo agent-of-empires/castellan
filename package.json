@@ -11,6 +11,7 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"eval": "node dist/eval.mjs",
+		"test:bundle": "node --input-type=module -e \"const m = await import('./dist/lambda/index.mjs'); if (typeof m.handler !== 'function') throw new Error('no handler export')\"",
 		"lint": "biome check .",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
