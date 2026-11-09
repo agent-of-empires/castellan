@@ -337,6 +337,52 @@ describe("routing", () => {
 	});
 });
 
+describe("owner/* entries", () => {
+	const pr = (full_name: string) => {
+		const [owner = "", name = ""] = full_name.split("/");
+		return hook("pull_request", {
+			action: "opened",
+			repository: { id: 1, full_name, owner: { login: owner }, name },
+			pull_request: { number: 1 },
+		});
+	};
+
+	it("accepts any repo of the owner, case-insensitively, and ignores others", async () => {
+		const { handler } = setup(["Agent-Of-Empires/*", "x/exact"]);
+		await handler(pr("agent-of-empires/anything"));
+		await handler(pr("x/exact"));
+		expect(evaluatePull).toHaveBeenCalledTimes(2);
+		const res = await handler(pr("other-org/x"));
+		expect(res.body).toMatch(/not allowed/);
+		expect((await handler(pr("x/other"))).body).toMatch(/not allowed/);
+		expect(evaluatePull).toHaveBeenCalledTimes(2);
+	});
+
+	it("sweeps installation repos of the owner, skipping archived and other owners, deduping exact entries", async () => {
+		const { handler, transport } = setup(["o/*", "o/a"]);
+		const repo = (full_name: string, archived = false) => ({
+			full_name,
+			archived,
+			owner: { login: full_name.split("/")[0] },
+		});
+		transport.paginate.mockResolvedValue([
+			repo("o/a"),
+			repo("o/b"),
+			repo("o/old", true),
+			repo("p/c"),
+		]);
+		await handler({ source: "sweep" });
+		expect(transport.paginate).toHaveBeenCalledWith(
+			"GET /installation/repositories",
+			{ per_page: 100 },
+		);
+		expect(vi.mocked(listWork).mock.calls.map((c) => c[1])).toEqual([
+			{ owner: "o", repo: "a" },
+			{ owner: "o", repo: "b" },
+		]);
+	});
+});
+
 describe("sweep", () => {
 	it("runs the pipeline for every open PR and needs-triage issue", async () => {
 		const { handler } = setup();

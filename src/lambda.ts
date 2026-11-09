@@ -5,7 +5,7 @@ import type { Secrets } from "./secrets.js";
 import { STATUS_CONTEXT } from "./status.js";
 
 export interface Deps {
-	/** `owner/repo` list the bot may act on. Empty is a kill switch. */
+	/** `owner/repo` or `owner/*` list the bot may act on. Empty is a kill switch. */
 	repos: string[];
 	loadSecrets(): Promise<Secrets>;
 	connect(
@@ -98,7 +98,15 @@ async function runAll(jobs: Job[], ctx?: LambdaContext) {
 }
 
 export function createHandler(deps: Deps) {
-	const allowed = new Set(deps.repos.map((r) => r.toLowerCase()));
+	const entries = deps.repos.map((r) => r.toLowerCase());
+	const owners = new Set(
+		entries.filter((r) => r.endsWith("/*")).map((r) => r.slice(0, -2)),
+	);
+	const exact = new Set(entries.filter((r) => !r.endsWith("/*")));
+	const isAllowed = (full: string) => {
+		const name = full.toLowerCase();
+		return exact.has(name) || owners.has(name.split("/")[0] ?? "");
+	};
 	// Once per container; a rejection is not cached, so the next invocation retries.
 	let secrets: Promise<Secrets> | undefined;
 	let env: Promise<Env> | undefined;
@@ -202,7 +210,7 @@ export function createHandler(deps: Deps) {
 			return reply(400, "invalid json");
 		}
 		const full = p.repository?.full_name;
-		if (!p.repository || !full || !allowed.has(full.toLowerCase())) {
+		if (!p.repository || !full || !isAllowed(full)) {
 			return reply(200, "ignored: repository not allowed");
 		}
 		const e = await getEnv();
@@ -232,10 +240,33 @@ export function createHandler(deps: Deps) {
 		return reply(200, `ok failed=${failed} skipped=${skipped}`);
 	}
 
+	/** Exact entries plus the installation's repos for each `owner/*`, deduped. */
+	async function sweepTargets(e: Env) {
+		const targets = new Map(
+			deps.repos
+				.filter((r) => !r.endsWith("/*"))
+				.map((r) => [r.toLowerCase(), r]),
+		);
+		if (owners.size) {
+			const repos = await e.transport.paginate(
+				"GET /installation/repositories",
+				{
+					per_page: 100,
+				},
+			);
+			for (const r of repos) {
+				if (!r.archived && owners.has(r.owner.login.toLowerCase())) {
+					targets.set(r.full_name.toLowerCase(), r.full_name);
+				}
+			}
+		}
+		return [...targets.values()];
+	}
+
 	async function sweep(ctx?: LambdaContext) {
 		const e = await getEnv();
 		let infra = 0;
-		for (const full of deps.repos) {
+		for (const full of await sweepTargets(e)) {
 			if (outOfTime(ctx)) {
 				console.error(`sweep stopped before ${full}: out of time`);
 				break;
@@ -273,7 +304,7 @@ export function createHandler(deps: Deps) {
 		event: LambdaEvent,
 		ctx?: LambdaContext,
 	): Promise<LambdaResult> => {
-		if (!allowed.size) return reply(200, "disabled");
+		if (!entries.length) return reply(200, "disabled");
 		try {
 			if (event.headers) return await webhook(event, ctx);
 			if (event.source === "sweep") return await sweep(ctx);
