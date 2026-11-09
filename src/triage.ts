@@ -189,7 +189,7 @@ export async function triage(
 	opts: { dryRun?: boolean } = {},
 ): Promise<TriageResult> {
 	const { owner, repo } = repoRef;
-	if (config.mode === "off") return { ok: true, skipped: "off" };
+	if (config.triage.mode === "off") return { ok: true, skipped: "off" };
 
 	const state = await transport.graphql<State>(STATE_QUERY, {
 		owner,
@@ -247,7 +247,8 @@ export async function triage(
 		[priorityField, sizeField, statusField].every((f) => values.has(f)) &&
 		(haveType !== feature || values.has(roadmapField));
 	if (nothingMissing) {
-		if (config.mode === "enforce" && !opts.dryRun) await removeNeedsTriage();
+		if (config.triage.mode === "enforce" && !opts.dryRun)
+			await removeNeedsTriage();
 		return { ok: true, skipped: "nothing missing" };
 	}
 	if (!project) {
@@ -350,9 +351,9 @@ export async function triage(
 		reasons: c.reasons,
 	};
 
-	if (opts.dryRun) return { ok: true, mode: config.mode, proposal };
+	if (opts.dryRun) return { ok: true, mode: config.triage.mode, proposal };
 
-	if (config.mode === "enforce") {
+	if (config.triage.mode === "enforce") {
 		if (labels.length) {
 			await transport.request(
 				"POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
@@ -374,8 +375,8 @@ export async function triage(
 		}
 	}
 
-	const verb = config.mode === "enforce" ? "Applied" : "Proposed";
-	const lines = [`**Castellan triage (${config.mode})**`, ""];
+	const verb = config.triage.mode === "enforce" ? "Applied" : "Proposed";
+	const lines = [`**Castellan triage (${config.triage.mode})**`, ""];
 	if (labels.length || fields.length) {
 		lines.push(`${verb}:`);
 		for (const l of labels) lines.push(`- Label \`${l}\``);
@@ -397,6 +398,6 @@ export async function triage(
 		{ owner, repo, issue_number: issue.number, body: lines.join("\n") },
 	);
 
-	if (config.mode === "enforce") await removeNeedsTriage();
-	return { ok: true, mode: config.mode, proposal };
+	if (config.triage.mode === "enforce") await removeNeedsTriage();
+	return { ok: true, mode: config.triage.mode, proposal };
 }

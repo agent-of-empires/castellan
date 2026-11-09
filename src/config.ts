@@ -66,6 +66,10 @@ const base = z.strictObject({
 		.prefault({}),
 	triage: z
 		.strictObject({
+			mode: z
+				.enum(["off", "shadow", "enforce"])
+				.optional()
+				.describe("Defaults to the top-level `mode`."),
 			priority_labels: z
 				.array(z.string())
 				.min(1)
@@ -132,7 +136,11 @@ const schema = base.transform((c, ctx) => {
 			});
 		}
 	}
-	return { ...c, models };
+	return {
+		...c,
+		triage: { ...c.triage, mode: c.triage.mode ?? c.mode },
+		models,
+	};
 });
 
 function stripUndefined<T extends Record<string, string | undefined>>(o: T) {

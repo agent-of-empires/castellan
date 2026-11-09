@@ -24,7 +24,7 @@ export interface Env {
 	/** The App's `<slug>[bot]` login. */
 	login: string;
 	llm?: LlmDeps;
-	/** Overrides `mode` from `.castellan.yml`. */
+	/** Overrides `mode` and `triage.mode` from `.castellan.yml`. */
 	mode?: Config["mode"];
 }
 
@@ -49,7 +49,13 @@ async function repoConfig(env: Env, repoRef: Repo, ref?: string) {
 	const read = githubReader(env.transport, repoRef);
 	const loaded = await loadConfig(ref ?? data.default_branch, read);
 	const withMode = (config: Config) =>
-		env.mode ? { ...config, mode: env.mode } : config;
+		env.mode
+			? {
+					...config,
+					mode: env.mode,
+					triage: { ...config.triage, mode: env.mode },
+				}
+			: config;
 	if (loaded.ok) {
 		return {
 			config: withMode(loaded.config),

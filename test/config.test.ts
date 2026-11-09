@@ -57,6 +57,28 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 		});
 	});
 
+	it.each(["shadow", "enforce", "off"])(
+		"triage.mode defaults to mode %s",
+		async (mode) => {
+			const r = await loadConfig("main", reader(`mode: ${mode}`));
+			expect(r).toMatchObject({
+				ok: true,
+				config: { mode, triage: { mode } },
+			});
+		},
+	);
+
+	it("keeps an explicit triage.mode apart from mode", async () => {
+		const r = await loadConfig(
+			"main",
+			reader("mode: shadow\ntriage: { mode: enforce }"),
+		);
+		expect(r).toMatchObject({
+			ok: true,
+			config: { mode: "shadow", triage: { mode: "enforce" } },
+		});
+	});
+
 	it.each([null, "", "# nothing"])("uses defaults for %j", async (text) => {
 		const r = await loadConfig("main", reader(text));
 		expect(r).toMatchObject({ ok: true, config: { mode: "shadow" } });

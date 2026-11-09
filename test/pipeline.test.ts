@@ -263,6 +263,23 @@ describe("mode override", () => {
 		expect(enforce.routes()).toContain(APPROVE);
 	});
 
+	it("also overrides triage.mode", async () => {
+		const w = world({ yaml: "mode: shadow\ntriage: { mode: enforce }" });
+		expect(await triageIssue({ ...w.env, mode: "off" }, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+	});
+
+	it("leaves the PR gate on mode when triage.mode differs", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { mode: enforce }\ntrustedAuthors: [alice]",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes()).toContain(COMMENT);
+		expect(w.routes()).not.toContain(APPROVE);
+	});
+
 	it("also applies to the fallback config of an invalid file", async () => {
 		const w = world({ yaml: "mode: nonsense" });
 		const r = await evaluatePull({ ...w.env, mode: "enforce" }, repo, 3);

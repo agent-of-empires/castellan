@@ -182,6 +182,25 @@ describe("triage", () => {
 		expect(m.create).not.toHaveBeenCalled();
 	});
 
+	it("triage.mode off skips even when mode is shadow", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: shadow\ntriage: { mode: off }");
+		expect(r).toEqual({ ok: true, skipped: "off" });
+		expect(w.graphql).not.toHaveBeenCalled();
+	});
+
+	it("triage.mode enforce applies and removes needs-triage under a shadow mode", async () => {
+		const w = world();
+		await run(w, "mode: shadow\ntriage: { mode: enforce }");
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
+	});
+
+	it("triage.mode shadow only comments under an enforce mode", async () => {
+		const w = world();
+		await run(w, "mode: enforce\ntriage: { mode: shadow }");
+		expect(routes(w.request)).toEqual([COMMENT]);
+	});
+
 	it("shadow only comments the proposal and says fit is not set", async () => {
 		const w = world();
 		const { r } = await run(w, "");
