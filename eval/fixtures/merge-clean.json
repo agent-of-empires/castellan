@@ -1,0 +1,61 @@
+{
+	"name": "fixture/merge-clean",
+	"snapshot": {
+		"title": "fix: handle empty config",
+		"body": "Closes #7",
+		"bodyTruncated": false,
+		"author": "alice",
+		"authorClass": "maintainer",
+		"draft": false,
+		"baseRef": "main",
+		"baseSha": "base1",
+		"headRef": "fix/empty-config",
+		"headSha": "abc123",
+		"linkedIssues": [7],
+		"files": [
+			{
+				"path": "src/config.ts",
+				"status": "modified",
+				"additions": 6,
+				"deletions": 2
+			}
+		],
+		"filesTruncated": false,
+		"diff": "diff --git a/src/config.ts b/src/config.ts\n",
+		"diffTruncated": false,
+		"checks": [
+			{
+				"name": "check",
+				"conclusion": "success"
+			}
+		],
+		"reviews": [],
+		"codeRabbit": null
+	},
+	"context": {
+		"defaultBranch": "main",
+		"codeowners": [],
+		"bugIssues": [7]
+	},
+	"requiredChecks": ["check"],
+	"review": {
+		"ok": true,
+		"verdict": {
+			"intent_match": true,
+			"new_behavior": false,
+			"reasons": []
+		},
+		"usage": {
+			"inputTokens": 1,
+			"outputTokens": 1
+		},
+		"costUsd": 0,
+		"promptHash": "p"
+	},
+	"outcome": {
+		"kind": "merged_clean",
+		"mergedAt": "2026-01-10T12:00:00Z",
+		"ciGreenAt": "2026-01-10T10:00:00Z",
+		"humanReviews": 1
+	}
+}
