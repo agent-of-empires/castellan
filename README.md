@@ -34,6 +34,14 @@ GitHub marks a webhook delivery as timed out after 10 seconds. The Lambda keeps 
 
 The handler lives in `src/lambda.ts`, the per-PR pipeline in `src/pipeline.ts`. The SDKs are bundled, not externalized, so the zip does not depend on the Lambda runtime's SDK version. The bundle ships no sourcemap. `pnpm test:bundle` imports `dist/lambda/index.mjs` as a real ES module after `pnpm build`.
 
+## Self-hosting without AWS
+
+Both adapters call the same entry as the Lambda adapter will: `runForPr` and `runForIssue` in `src/run.ts`. They are separate bundles (`dist/action`, `dist/cli`), never part of the Lambda zip.
+
+**GitHub Action.** Copy [templates/castellan.yml](templates/castellan.yml) into `.github/workflows/`. It runs on `pull_request`, `issues`, and a 30 minute `schedule` sweep of every open non-draft PR and every issue labeled `needs-triage`. `pull_request_target` is refused in code, because it would give write secrets to fork code. A fork PR gets a read-only token, so its writes only land on the next sweep. Credentials are inputs: `github-token` (default `github.token`), or `app-id`, `installation-id`, `private-key` and `bot-login` (App wins). A workflow token cannot approve and cannot write org project fields, so use an App for `enforce` and for triage fields. `anthropic-api-key` is needed for the model review (the default provider is Bedrock, which needs ambient AWS credentials).
+
+**CLI.** `castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]` after `pnpm build` (`node dist/cli/index.mjs`). Credentials come from `GITHUB_TOKEN`, or `CASTELLAN_APP_ID`, `CASTELLAN_INSTALLATION_ID`, `CASTELLAN_PRIVATE_KEY` and `CASTELLAN_BOT_LOGIN`; plus `ANTHROPIC_API_KEY`. `--dry-run` forces `shadow` regardless of `--mode`, writes nothing to GitHub, and prints the brief it would have posted.
+
 ## Eval
 
 Replays closed PRs as of their last head SHA, with human reviews hidden, and compares each verdict to what humans did. Output is markdown.
@@ -60,7 +68,7 @@ pnpm install
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm build   # dist/lambda/index.mjs
+pnpm build   # dist/lambda, dist/action, dist/cli
 ```
 
 ## Releases
