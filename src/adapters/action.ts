@@ -10,7 +10,8 @@ import { failed, type Item } from "./result.js";
 interface Payload {
 	pull_request?: {
 		number: number;
-		head?: { repo?: { fork?: boolean } | null };
+		head?: { repo?: { full_name: string } | null };
+		base?: { repo?: { full_name: string } | null };
 	};
 	issue?: { number: number };
 }
@@ -35,7 +36,8 @@ export async function handleEvent(
 		case "pull_request": {
 			const pr = payload.pull_request;
 			if (!pr?.number) throw new Error("event has no pull_request.number");
-			if (pr.head?.repo?.fork) return [];
+			// A deleted fork has no head repo, so it counts as a fork too.
+			if (pr.head?.repo?.full_name !== pr.base?.repo?.full_name) return [];
 			return [
 				{
 					kind: "pr",
@@ -130,7 +132,14 @@ async function main(env = process.env) {
 	const items = await handleEvent(
 		event.name,
 		event.payload,
-		{ ...(await resolveAuth(auth)), mode, llm: { apiKey } },
+		{
+			...(await resolveAuth(
+				auth,
+				"github-token, or app-id, installation-id and private-key",
+			)),
+			mode,
+			llm: { apiKey },
+		},
 		event.repo,
 	);
 	for (const item of items) console.log(JSON.stringify(item));
