@@ -1,0 +1,31 @@
+name: castellan
+on:
+  # Never pull_request_target: it would give write secrets to code from forks.
+  pull_request: { types: [opened, synchronize, reopened, ready_for_review] }
+  issues: { types: [opened, labeled] }
+  schedule: [{ cron: "*/30 * * * *" }]
+  workflow_dispatch:
+concurrency:
+  {
+    group: "castellan-${{ github.event.pull_request.number || github.event.issue.number || 'sweep' }}",
+    cancel-in-progress: false,
+  }
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+  checks: read
+jobs:
+  castellan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: agent-of-empires/castellan@v0.1.0
+        with:
+          # Only used when .castellan.yml sets llm.provider: anthropic (the default, bedrock, ignores it).
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # For enforce mode, or to triage project fields, use an App instead:
+          # app-id: ${{ vars.CASTELLAN_APP_ID }}
+          # installation-id: ${{ vars.CASTELLAN_INSTALLATION_ID }}
+          # private-key: ${{ secrets.CASTELLAN_PRIVATE_KEY }}

@@ -1,0 +1,37 @@
+name: Castellan
+description: Merge gate and issue triage for the current repository
+inputs:
+  github-token:
+    description: Token to act with. Use an App instead for enforce mode, whose approval a workflow token cannot give.
+    default: ${{ github.token }}
+  app-id:
+    description: GitHub App id
+  installation-id:
+    description: GitHub App installation id
+  private-key:
+    description: GitHub App private key
+  bot-login:
+    description: Login castellan acts as with a token. Defaults to github-actions[bot]; ignored with an App, whose login comes from GET /app.
+  anthropic-api-key:
+    description: "Anthropic API key. Only used when .castellan.yml sets llm.provider to anthropic; the default is bedrock, which ignores it and needs ambient AWS credentials."
+  mode:
+    description: Overrides mode from .castellan.yml (off, shadow, enforce)
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - run: corepack enable && pnpm install --frozen-lockfile && pnpm build
+      shell: bash
+      working-directory: ${{ github.action_path }}
+    - run: node "$GITHUB_ACTION_PATH/dist/action/index.mjs"
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_APP_ID: ${{ inputs.app-id }}
+        INPUT_INSTALLATION_ID: ${{ inputs.installation-id }}
+        INPUT_PRIVATE_KEY: ${{ inputs.private-key }}
+        INPUT_BOT_LOGIN: ${{ inputs.bot-login }}
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_MODE: ${{ inputs.mode }}
