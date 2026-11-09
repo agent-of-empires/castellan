@@ -181,7 +181,7 @@ export async function evaluatePull(
 			run: async () => {
 				const linked = snapshot.linkedIssues[0];
 				const issue = linked ? await getIssue(env, repoRef, linked) : null;
-				return review(
+				const result = await review(
 					{
 						title: snapshot.title,
 						body: snapshot.body,
@@ -191,6 +191,12 @@ export async function evaluatePull(
 					config,
 					env.llm,
 				);
+				if (!result.ok)
+					console.warn("model review failed", {
+						error: result.error,
+						detail: result.detail?.slice(0, 500),
+					});
+				return result;
 			},
 		});
 		const result = dedup.source === "skipped" ? undefined : dedup.result;
