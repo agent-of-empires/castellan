@@ -126,7 +126,10 @@ export async function cli(
 		return 0;
 	}
 	const args = parseCli(argv);
-	const auth = await resolveAuth(authFromEnv(env));
+	const auth = await resolveAuth(
+		authFromEnv(env),
+		"GITHUB_TOKEN, or CASTELLAN_APP_ID, CASTELLAN_INSTALLATION_ID and CASTELLAN_PRIVATE_KEY",
+	);
 	return execute(
 		args,
 		{ ...auth, llm: { apiKey: env.ANTHROPIC_API_KEY } },

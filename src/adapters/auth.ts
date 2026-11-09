@@ -29,6 +29,8 @@ export interface AuthInput {
 /** App credentials win over a token. */
 export async function resolveAuth(
 	i: AuthInput,
+	/** Names the adapter's own credential settings, for the error when none are set. */
+	hint: string,
 ): Promise<Pick<Env, "transport" | "login">> {
 	if (i.appId || i.installationId || i.privateKey) {
 		if (!(i.appId && i.installationId && i.privateKey)) {
@@ -45,9 +47,7 @@ export async function resolveAuth(
 		};
 	}
 	if (!i.token) {
-		throw new Error(
-			"set GITHUB_TOKEN, or CASTELLAN_APP_ID, CASTELLAN_INSTALLATION_ID and CASTELLAN_PRIVATE_KEY",
-		);
+		throw new Error(`no credentials: set ${hint}`);
 	}
 	return {
 		transport: new Octokit({ auth: i.token }),
