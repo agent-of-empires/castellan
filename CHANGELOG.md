@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/agent-of-empires/castellan/compare/v0.1.0...v0.1.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **lambda:** filter check_suite and sha PR lookups to this repo ([#62](https://github.com/agent-of-empires/castellan/issues/62)) ([0783f8b](https://github.com/agent-of-empires/castellan/commit/0783f8b191a5289def1e852ddab1983174e9c9ad))
+* **pipeline:** fail closed on team lookup and snapshot errors ([#59](https://github.com/agent-of-empires/castellan/issues/59)) ([bc5aa38](https://github.com/agent-of-empires/castellan/commit/bc5aa3875d2b92f91226e1a36b430f25588d6e8d))
+
 ## 0.1.0 (2026-11-09)
 
 
