@@ -2,7 +2,7 @@
 
 Policy lives in `.castellan.yml` at the repo root. The schema is `src/config.ts`; this page is derived from it.
 
-- **Where it is read from.** For a PR, from the PR's base commit (`pull_request.base.sha`), never the head, so a PR cannot loosen its own gate. For issue triage and the sweep's repo listing, from the repo's default branch.
+- **Where it is read from.** For a PR, from the tip of the PR's base branch (`pull_request.base.ref`), never the head, so a PR cannot loosen its own gate. For issue triage and the sweep's repo listing, from the repo's default branch.
 - **Every key is optional.** A missing file, an empty file and `{}` all mean "all defaults" (`mode: shadow`).
 - **Unknown keys are rejected**, at any depth.
 - **An invalid file fails closed.** If the file cannot be read, is not valid YAML or fails validation, the PR is escalated with rule `config_invalid` and the error as the reason. Config falls back to defaults, so nothing is approved or queued (a `mode` override from the Action input or CLI flag still applies, but an escalated PR is never approved). Triage on an invalid config throws and writes nothing.
@@ -73,7 +73,7 @@ paths:
 
 The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation fails closed: the `castellan` status on the head is set to escalate with the description `castellan: internal error` and the error is rethrown (logged on the Lambda, exit 1 for the Action and CLI). The author is never silently treated as a non-member.
 
-`teams.protected` is the only thing that makes castellan read CODEOWNERS, from the base commit, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. Only owners written as `@org/team` are compared; individual users never match.
+`teams.protected` is the only thing that makes castellan read CODEOWNERS, from the base branch tip, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. Only owners written as `@org/team` are compared; individual users never match.
 
 ```yaml
 teams:
