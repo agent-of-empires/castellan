@@ -7,6 +7,9 @@
 	"engines": {
 		"node": ">=22"
 	},
+	"bin": {
+		"castellan": "dist/cli/index.mjs"
+	},
 	"packageManager": "pnpm@10.33.0",
 	"scripts": {
 		"build": "node scripts/build.mjs",
