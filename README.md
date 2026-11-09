@@ -4,7 +4,7 @@ A stateless merge gate and issue triage bot for GitHub. It re-evaluates a PR on 
 event and posts one brief with a verdict (`merge`, `escalate`). Rules decide; the
 model can only veto.
 
-**Status:** bootstrap only. No gate behavior yet. Design and rollout plan:
+Design and rollout plan:
 [RFC agent-of-empires#5502](https://github.com/agent-of-empires/agent-of-empires/issues/5502).
 
 ## Triage
@@ -15,7 +15,20 @@ While `needs-triage` is present, castellan fills only the missing priority, `are
 
 ## Acting on a verdict
 
-`mode` is read from `.castellan.yml` on the base SHA only. `off` does nothing. `shadow` posts the brief and the `castellan` status. `enforce` also approves the head SHA and enables squash auto-merge, as the GitHub App installation, and only for a `merge` verdict. A `merge` that touches `paths.protected`, `paths.release`, a file owned by `teams.protected`, `.castellan.yml`, CODEOWNERS or `.github/` is downgraded to `escalate` in code. If the head moved since evaluation, nothing is approved or queued. Re-running sequentially on the same head adds no second approval and does not re-queue. There is no lock, so two concurrent deliveries on the same head can both approve. If queuing fails, the status is set back to `pending` and the comment says why. `act` is not yet wired into the entrypoint; that lands with the Lambda adapter.
+`mode` is read from `.castellan.yml` on the base SHA only. `off` does nothing. `shadow` posts the brief and the `castellan` status. `enforce` also approves the head SHA and enables squash auto-merge, as the GitHub App installation, and only for a `merge` verdict. A `merge` that touches `paths.protected`, `paths.release`, a file owned by `teams.protected`, `.castellan.yml`, CODEOWNERS or `.github/` is downgraded to `escalate` in code. If the head moved since evaluation, nothing is approved or queued. Re-running sequentially on the same head adds no second approval and does not re-queue. There is no lock, so two concurrent deliveries on the same head can both approve. If queuing fails, the status is set back to `pending` and the comment says why.
+
+## Lambda
+
+`dist/lambda/index.mjs`, handler `index.handler`, Node 22 ESM, behind a Function URL with auth `NONE`. The `X-Hub-Signature-256` HMAC is verified (timing-safe) on the raw body before anything is parsed; a bad one gets 401 and no side effects.
+
+| Env | Meaning |
+| --- | --- |
+| `CASTELLAN_APP_SECRET_ARN` | Secrets Manager JSON with `app_id`, `installation_id`, `private_key`, `webhook_secret`. Read once per container. |
+| `CASTELLAN_REPOS` | Comma list of `owner/repo` the bot acts on. Empty is a kill switch: every event and sweep is ignored. |
+
+Routed webhooks: `pull_request` (opened, synchronize, reopened, ready_for_review), `check_suite` and `check_run` (completed), `pull_request_review` (submitted), `status`, and `issues` (opened, triage). Castellan's own `castellan` status and its own approvals are ignored so they cannot re-trigger it. The `{"source":"sweep"}` EventBridge event runs the same pipeline over every open PR and `needs-triage` issue in `CASTELLAN_REPOS`. The App login used to find its own comment and approval is `<slug>[bot]` from `GET /app`.
+
+The SDKs are bundled, not externalized, so the zip does not depend on the Lambda runtime's SDK version.
 
 ## Eval
 
