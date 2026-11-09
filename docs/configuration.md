@@ -16,11 +16,13 @@ Changes to `prompt.*` or `models.review` change the prompt hash, so the next eva
 
 `off | shadow | enforce`. Default `shadow`.
 
-- `off`: nothing is evaluated, posted or written. PRs are skipped, triage returns "off".
-- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Triage comments a proposal. Nothing is approved, merged, labeled or written to a project.
-- `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict; triage applies labels and project fields and removes `needs-triage`.
+- `off`: nothing is evaluated, posted or written. PRs and triage are skipped.
+- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Nothing is approved, merged, labeled or written to a project.
+- `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict.
 
-The GitHub Action input `mode` and the CLI `--mode` flag override this key. Any value other than the three above fails the run.
+These describe the PR gate. Triage has no shadow mode: it is independent of `shadow` and `enforce`, governed by [`triage.enabled`](#triage), and only `off` here disables it.
+
+The GitHub Action input `mode` and the CLI `--mode` flag override this key. `--mode off` also disables triage; `--mode shadow` does not stop triage from applying labels (`--dry-run` is what writes nothing). Any value other than the three above fails the run.
 
 ```yaml
 mode: shadow
@@ -99,11 +101,11 @@ skip_branches: ["release-staging/*", "release-plz-*", "renovate/**"]
 
 Label names castellan reads or writes.
 
-| Key                  | Default        | Used for                                                                                            |
-| -------------------- | -------------- | --------------------------------------------------------------------------------------------------- |
-| `labels.needsTriage` | `needs-triage` | triage runs only while an issue carries it; the sweep lists issues by it; removed last in `enforce` |
-| `labels.bug`         | `bug`          | external fix PRs must close an issue with this label; the triage `bug` type label                   |
-| `labels.feature`     | `enhancement`  | the triage `feature` type label                                                                     |
+| Key                  | Default        | Used for                                                                               |
+| -------------------- | -------------- | -------------------------------------------------------------------------------------- |
+| `labels.needsTriage` | `needs-triage` | triage runs only while an issue carries it; the sweep lists issues by it; removed last |
+| `labels.bug`         | `bug`          | external fix PRs must close an issue with this label; the triage `bug` type label      |
+| `labels.feature`     | `enhancement`  | the triage `feature` type label                                                        |
 
 ```yaml
 labels:
@@ -134,9 +136,18 @@ project:
 
 | Key                         | Default                                                   | Meaning                                                                                                                  |
 | --------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `triage.enabled`            | `true`                                                    | Set `false` to turn triage off. Triage has no shadow mode: when enabled it applies labels and project fields for real    |
 | `triage.priority_labels`    | `["P0", "P1", "P2", "P3"]`                                | Priority labels, most urgent first, at least one. The model must pick one, and it must exist as a label in the repo      |
 | `triage.status_by_priority` | `{P0: Ready, P1: Ready, P2: Backlog, P3: Backlog}`        | Project Status option set for each priority. Every entry in `priority_labels` needs a key here, or the config is invalid |
 | `triage.roadmap_by_status`  | `{Ready: "📋 Planned", Backlog: "💡 Future / Exploring"}` | Roadmap option set for a feature, keyed by the Status                                                                    |
+
+With `mode: shadow` and the default `triage.enabled: true`, PRs only get the shadow brief while triage writes labels and project fields for real. `mode: off` disables triage whatever `triage.enabled` says.
+
+```yaml
+mode: shadow
+triage:
+  enabled: true
+```
 
 ```yaml
 triage:
@@ -285,12 +296,12 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 ### Triage
 
-- Runs only while the issue has `labels.needsTriage`. Skipped when nothing is missing; in `enforce` the label is then removed.
+- Runs only while the issue has `labels.needsTriage`. Skipped when `mode` is `off` or `triage.enabled` is false. When nothing is missing the label is removed.
 - Fills only what is missing: the priority label, one `area:*` label, the type label (`labels.bug` or `labels.feature`), and the project Size, Status, Priority and (features only) Roadmap fields. It never overwrites a value that is set.
 - The model must choose a priority from `triage.priority_labels` and an area from the repo's existing `area:*` labels, and both labels must exist. Sizes are `XS`, `S`, `M`, `L`, `XL`. Labels are not created.
 - Every name (project, field, option, label) is resolved before any write. A name that cannot be found fails closed with nothing written.
 - Fit is never set. `ready-for-agent` is only ever suggested in the comment, never applied.
-- No result is cached: each run on a `needs-triage` issue calls the model and, in `shadow`, posts a new comment.
+- No result is cached: each run on a `needs-triage` issue calls the model and posts a new comment.
 
 ### Runtime
 

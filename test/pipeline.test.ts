@@ -263,6 +263,40 @@ describe("mode override", () => {
 		expect(enforce.routes()).toContain(APPROVE);
 	});
 
+	it("Env.mode off overrides triage.enabled true", async () => {
+		const w = world({ yaml: "mode: shadow\ntriage: { enabled: true }" });
+		expect(await triageIssue({ ...w.env, mode: "off" }, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+	});
+
+	it("triage.enabled false skips triage while PRs are still evaluated", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { enabled: false }\ntrustedAuthors: [alice]",
+		});
+		expect(await triageIssue(w.env, repo, 5)).toEqual({
+			ok: true,
+			skipped: "off",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes()).toContain(COMMENT);
+	});
+
+	it("keeps the PR gate in shadow while triage is enabled", async () => {
+		const w = world({
+			yaml: "mode: shadow\ntriage: { enabled: true }\ntrustedAuthors: [alice]",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes()).toContain(COMMENT);
+		expect(w.routes()).not.toContain(APPROVE);
+		const statuses = w.request.mock.calls.filter(([r]) => r === STATUS);
+		expect(statuses.length).toBeGreaterThan(0);
+		for (const [, p] of statuses) {
+			expect((p as { description: string }).description).toMatch(/^shadow:/);
+		}
+	});
+
 	it("also applies to the fallback config of an invalid file", async () => {
 		const w = world({ yaml: "mode: nonsense" });
 		const r = await evaluatePull({ ...w.env, mode: "enforce" }, repo, 3);

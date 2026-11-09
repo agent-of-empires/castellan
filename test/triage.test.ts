@@ -182,24 +182,38 @@ describe("triage", () => {
 		expect(m.create).not.toHaveBeenCalled();
 	});
 
-	it("shadow only comments the proposal and says fit is not set", async () => {
+	it("triage.enabled false skips even when mode is enforce", async () => {
 		const w = world();
-		const { r } = await run(w, "");
-		expect(r).toMatchObject({
+		const { r, m } = await run(w, "mode: enforce\ntriage: { enabled: false }");
+		expect(r).toEqual({ ok: true, skipped: "off" });
+		expect(w.graphql).not.toHaveBeenCalled();
+		expect(m.create).not.toHaveBeenCalled();
+	});
+
+	it("mode off skips regardless of triage.enabled", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: off\ntriage: { enabled: true }");
+		expect(r).toEqual({ ok: true, skipped: "off" });
+		expect(w.graphql).not.toHaveBeenCalled();
+	});
+
+	it("applies labels and fields by default even with mode shadow", async () => {
+		const w = world();
+		const { r } = await run(w, "mode: shadow");
+		expect(r).toEqual({
 			ok: true,
-			mode: "shadow",
-			proposal: {
+			proposal: expect.objectContaining({
 				labels: ["P1", "area:core", "bug"],
 				fields: [
 					{ field: "Priority", option: "P1" },
 					{ field: "Size", option: "M" },
 					{ field: "Status", option: "Ready" },
 				],
-			},
+			}),
 		});
-		expect(routes(w.request)).toEqual([COMMENT]);
+		expect(routes(w.request)).toEqual([LABELS, COMMENT, REMOVE]);
 		const body = commentBody(w.request);
-		expect(body).toContain("Proposed:");
+		expect(body).toContain("Applied:");
 		expect(body).toContain("`ready-for-agent`");
 		expect(body).toContain("Fit is not set by triage");
 	});
@@ -228,7 +242,7 @@ describe("triage", () => {
 		expect(routes(w.request)).not.toContain("ready-for-agent");
 	});
 
-	it("dryRun returns the proposal and writes nothing, even in enforce", async () => {
+	it("dryRun returns the proposal and writes nothing", async () => {
 		const w = world();
 		const m = llm(answer);
 		const r = await triage(
@@ -241,7 +255,6 @@ describe("triage", () => {
 		);
 		expect(r).toMatchObject({
 			ok: true,
-			mode: "enforce",
 			proposal: { labels: ["P1", "area:core", "bug"] },
 		});
 		expect(w.request).not.toHaveBeenCalled();
@@ -372,12 +385,6 @@ describe("triage", () => {
 		nothingWritten(absent);
 
 		const full = ["needs-triage", "P1", "area:core", "bug"];
-		const shadow = world({ labels: full, items: [done] });
-		const s = await run(shadow, "");
-		expect(s.r).toEqual({ ok: true, skipped: "nothing missing" });
-		expect(s.m.create).not.toHaveBeenCalled();
-		nothingWritten(shadow);
-
 		const enforce = world({ labels: full, items: [done] });
 		const e = await run(enforce, "mode: enforce");
 		expect(e.r).toEqual({ ok: true, skipped: "nothing missing" });
@@ -459,7 +466,7 @@ describe("triage", () => {
 	it("reads every page of repo labels", async () => {
 		const w = world({ pageSize: 2 });
 		const { r, m } = await run(w, "");
-		expect(r).toMatchObject({ ok: true, mode: "shadow" });
+		expect(r).toMatchObject({ ok: true });
 		const p = m.create.mock.calls[0]?.[0] as { system: string };
 		expect(p.system).toContain("area:core, area:web");
 		const pages = w.graphql.mock.calls.filter(([q]) => q.includes("pageInfo"));

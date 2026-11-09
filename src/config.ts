@@ -66,6 +66,7 @@ const base = z.strictObject({
 		.prefault({}),
 	triage: z
 		.strictObject({
+			enabled: z.boolean().default(true),
 			priority_labels: z
 				.array(z.string())
 				.min(1)
