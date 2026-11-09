@@ -20,7 +20,7 @@ Changes to `prompt.*` or `models.review` change the prompt hash, so the next eva
 - `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Triage comments a proposal. Nothing is approved, merged, labeled or written to a project.
 - `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict; triage applies labels and project fields and removes `needs-triage`.
 
-The GitHub Action input `mode` and the CLI `--mode` flag override this key. Any value other than the three above fails the run.
+The GitHub Action input `mode` and the CLI `--mode` flag override this key and `triage.mode`. Any value other than the three above fails the run.
 
 ```yaml
 mode: shadow
@@ -134,9 +134,16 @@ project:
 
 | Key                         | Default                                                   | Meaning                                                                                                                  |
 | --------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `triage.mode`               | the top-level `mode`                                      | `off \| shadow \| enforce` for triage only. The PR gate keeps using `mode`                                               |
 | `triage.priority_labels`    | `["P0", "P1", "P2", "P3"]`                                | Priority labels, most urgent first, at least one. The model must pick one, and it must exist as a label in the repo      |
 | `triage.status_by_priority` | `{P0: Ready, P1: Ready, P2: Backlog, P3: Backlog}`        | Project Status option set for each priority. Every entry in `priority_labels` needs a key here, or the config is invalid |
 | `triage.roadmap_by_status`  | `{Ready: "📋 Planned", Backlog: "💡 Future / Exploring"}` | Roadmap option set for a feature, keyed by the Status                                                                    |
+
+```yaml
+mode: shadow
+triage:
+  mode: enforce
+```
 
 ```yaml
 triage:
