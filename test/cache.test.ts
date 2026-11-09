@@ -32,6 +32,23 @@ describe("block format", () => {
 		expect(serializeBlock(block).match(/-->/g)).toHaveLength(1);
 	});
 
+	it("keeps model text from forging a second marker", () => {
+		expect(serializeBlock(block).match(/<!-- castellan/g)).toHaveLength(1);
+	});
+
+	it("escapes dashes and still round-trips", () => {
+		const text = `a ${String.fromCharCode(0x2014)} b`;
+		const b: CacheBlock = {
+			...block,
+			llm: {
+				...llm,
+				verdict: { ...llm.verdict, reasons: [{ severity: "nit", text }] },
+			},
+		};
+		expect(serializeBlock(b)).not.toContain(String.fromCharCode(0x2014));
+		expect(parseBlock(serializeBlock(b))).toEqual(b);
+	});
+
 	it("stores promptHash once, at the top level", () => {
 		expect(serializeBlock(block).match(/"promptHash"/g)).toHaveLength(1);
 	});

@@ -35,13 +35,17 @@ export interface CacheKey {
 	model: string;
 }
 
-const MARKER = "<!-- castellan";
+export const MARKER = "<!-- castellan";
 // The real block is always the last thing in the body.
 const BLOCK = /<!-- castellan (\{.*?\}) -->\s*$/s;
 
 export function serializeBlock(block: CacheBlock): string {
-	// Escape ">" so model text can never close the HTML comment early.
-	const json = JSON.stringify({ v: 1, ...block }).replaceAll(">", "\\u003e");
+	// Escape "<" and ">" so model text can neither close the comment early nor forge a marker,
+	// and dashes so the comment stays dash free. All stay valid JSON.
+	const json = JSON.stringify({ v: 1, ...block }).replace(
+		/[<>\u2013\u2014]/g,
+		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
 	return `<!-- castellan ${json} -->`;
 }
 
