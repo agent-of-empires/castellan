@@ -27,7 +27,7 @@ Once a human merges a config change, it governs later PRs. Reviewing `.castellan
 The Function URL has auth `NONE`, so the signature is the only gate.
 
 - `X-Hub-Signature-256` is an HMAC SHA-256 of the raw request body with the App's webhook secret, compared with `timingSafeEqual` after a length check (`validSignature` in `src/lambda.ts`). The raw bytes are used (base64 decoded when the Function URL encodes the body), before anything is parsed.
-- A missing or wrong signature returns 401 with no side effects. Only then is the body parsed, and then the repository is checked against `CASTELLAN_REPOS`.
+- A missing or wrong signature returns 401 with no side effects. Only then is the body parsed, and then the repository is checked against `CASTELLAN_REPOS`: an exact `owner/repo` or an `owner/*` entry with the same owner, case-insensitively.
 - An empty `CASTELLAN_REPOS` returns 200 `disabled` for every event, a kill switch that needs no GitHub change.
 - Deliveries are not de-duplicated by delivery id. This is safe because every run re-evaluates from GitHub state and a repeated run on the same head neither approves twice nor re-queues. Two concurrent runs on one head can both approve.
 - The secret is loaded from Secrets Manager. A malformed secret fails with a fixed message so its content cannot reach the logs.

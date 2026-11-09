@@ -23,7 +23,7 @@ The Lambda, its role, the secret, the schedule and the AWS budget are defined in
 - A Lambda function on Node 22 with the zip from a release, handler `index.handler`, and a Function URL with auth `NONE` (the HMAC check is the gate). Set the function timeout well above 40 seconds: the sweep stops starting work when under 40 seconds remain, and one model call can take up to 30 seconds.
 - Environment variables:
   - `CASTELLAN_APP_SECRET_ARN`: ARN of the secret below. Read once per container.
-  - `CASTELLAN_REPOS`: comma separated `owner/repo` list the bot acts on. Empty is a kill switch: every event and sweep is ignored.
+  - `CASTELLAN_REPOS`: comma separated list of `owner/repo` or `owner/*` (every repo of that owner the App is installed on, archived repos excluded from the sweep) the bot acts on. A repo without `.castellan.yml` gets the default `mode: shadow`, so a wildcard cannot enforce anywhere that did not opt in. Empty is a kill switch: every event and sweep is ignored.
   - There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Role permissions: read the secret (`secretsmanager:GetSecretValue`), and for `llm.provider: bedrock` (the default) invoke the configured models on Bedrock. The Anthropic provider cannot be used on Lambda today because there is no way to pass it a key; without one the review fails closed to `escalate`.
 - An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs.
@@ -60,14 +60,14 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 
 ### What the Lambda handles
 
-| Event                 | Runs on                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------- |
-| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                               |
-| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA |
-| `pull_request_review` | `submitted`, except the App's own review                                              |
-| `status`              | any, except the `castellan` context itself                                            |
-| `issues`              | `opened`, `labeled`: triage. Without `needs-triage` it exits early; sweep is backup   |
-| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS`                           |
+| Event                 | Runs on                                                                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pull_request`        | `opened`, `synchronize`, `reopened`, `ready_for_review`                                                                                              |
+| `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA                                                                |
+| `pull_request_review` | `submitted`, except the App's own review                                                                                                             |
+| `status`              | any, except the `castellan` context itself                                                                                                           |
+| `issues`              | `opened`, `labeled`: triage. Without `needs-triage` it exits early; sweep is backup                                                                  |
+| `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS` (an `owner/*` entry is expanded through the installation, deduped against exact entries) |
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
 
