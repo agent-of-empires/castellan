@@ -50,6 +50,11 @@ const schema = z.strictObject({
 			roadmapField: z.string().default("Roadmap"),
 		})
 		.prefault({}),
+	llm: z
+		.strictObject({
+			provider: z.enum(["anthropic", "bedrock"]).default("bedrock"),
+		})
+		.prefault({}),
 	models: z
 		.strictObject({
 			review: z.string().default("claude-sonnet-5-5"),
