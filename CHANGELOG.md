@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3](https://github.com/agent-of-empires/castellan/compare/v0.3.2...v0.3.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **llm:** tolerate real model output when parsing the review JSON ([#94](https://github.com/agent-of-empires/castellan/issues/94)) ([01782c7](https://github.com/agent-of-empires/castellan/commit/01782c78c66ed0a38e09c356ed5ac39a2ce19c68))
+* **triage:** apply the resolved priority and post each proposal once ([#63](https://github.com/agent-of-empires/castellan/issues/63)) ([f21b6c7](https://github.com/agent-of-empires/castellan/commit/f21b6c7d0929589d0fcf3e40405613069992277c))
+
 ## [0.3.2](https://github.com/agent-of-empires/castellan/compare/v0.3.1...v0.3.2) (2026-11-09)
 
 
