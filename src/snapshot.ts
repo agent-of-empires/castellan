@@ -17,6 +17,7 @@ export interface Snapshot {
 	draft: boolean;
 	baseRef: string;
 	baseSha: string;
+	headRef: string;
 	headSha: string;
 	/** Issue numbers from Closes/Fixes/Resolves in the full, uncapped body. */
 	linkedIssues: number[];
@@ -111,6 +112,7 @@ export async function buildSnapshot(
 		draft: pr.draft ?? false,
 		baseRef: pr.base.ref,
 		baseSha: pr.base.sha,
+		headRef: pr.head.ref,
 		headSha,
 		linkedIssues: linkedIssues(fullBody),
 		files: files.slice(0, FILES_CAP).map((f) => ({
