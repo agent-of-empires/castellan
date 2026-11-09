@@ -69,7 +69,7 @@ paths:
 | `teams.maintainers` | team slug               | unset   | author class `maintainer`: the PR author is an active member                                                 |
 | `teams.protected`   | team slug or `org/slug` | unset   | rule `protected_owner`: any changed file whose last matching CODEOWNERS rule names `@<org>/<slug>` escalates |
 
-The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation fails (the status goes to `pending` with "internal error") rather than treating the author as a non-member.
+The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation throws before any comment or status is written (the Lambda logs it, the Action and CLI exit 1) rather than treating the author as a non-member.
 
 `teams.protected` is the only thing that makes castellan read CODEOWNERS, from the base commit, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. Only owners written as `@org/team` are compared; individual users never match.
 
@@ -278,7 +278,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 - PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates.
 - Labels, comments and review bodies are never fetched or shown to the model.
-- Review input: title, body, diff, and the body of the first linked issue (3,000 characters). Model call: 30 second timeout, no retries, 2,048 output tokens.
+- Review input: title, body, diff, and the body of the first linked issue (3,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 2,048 output tokens.
 - The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model)`. A rule escalated PR never reaches the model.
 
 ### Triage

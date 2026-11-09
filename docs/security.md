@@ -79,7 +79,7 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 - No shipped entrypoint (Lambda, Action, CLI) sets `maxCostUsd`, so this cap is not active today.
 - The `budget` failure is also what an unpriced model id produces. That check is always active: only the four default model ids have a price, so any other `models.*` value fails closed.
 - Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs, no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda.
-- The RFC's monthly Bedrock cap ($150 hard stop, alert at $75) is not in this repo. The README places the budget in the infra repo, not in the code.
+- The RFC's monthly Bedrock cap ($150 hard stop, alert at $75) is not in this repo. [self-hosting.md](self-hosting.md#infrastructure) places the AWS budget in the infra repo, not in the code. `CASTELLAN_BUDGET_USD` is set on the Lambda by the infra Terraform, but the handler does not read it today. It is not a spend limit; the AWS Budget only alerts at 50% and 100% of $150.
 - Triage has no cache, so a `needs-triage` issue costs one model call on every run that reaches it.
 
 ## Differences from the RFC

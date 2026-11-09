@@ -24,8 +24,9 @@ The Lambda, its role, the secret, the schedule and the AWS budget are defined in
 - Environment variables:
   - `CASTELLAN_APP_SECRET_ARN`: ARN of the secret below. Read once per container.
   - `CASTELLAN_REPOS`: comma separated `owner/repo` list the bot acts on. Empty is a kill switch: every event and sweep is ignored.
+  - `CASTELLAN_BUDGET_USD`: set by the infra repo's Terraform, but the handler does not read it today. It is not a spend limit; the AWS Budget only alerts at 50% and 100% of $150.
 - Role permissions: read the secret (`secretsmanager:GetSecretValue`), and for `llm.provider: bedrock` (the default) invoke the configured models on Bedrock. The Anthropic provider cannot be used on Lambda today because there is no way to pass it a key; without one the review fails closed to `escalate`.
-- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. How often is your choice; it is also what picks up fork PRs and issues labeled after they were opened.
+- An EventBridge rule that invokes the function with the input `{"source":"sweep"}`. It runs the same pipeline over every open PR and every `needs-triage` issue in `CASTELLAN_REPOS`, three at a time. The infra default is `rate(30 minutes)`; the sweep is also what picks up fork PRs and issues labeled after they were opened.
 
 ### The secret
 
