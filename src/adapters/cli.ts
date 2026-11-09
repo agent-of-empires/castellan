@@ -2,15 +2,21 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import type { ConfigSource } from "../central.js";
 import { renderComment } from "../comment.js";
 import type { Config } from "../config.js";
 import type { GithubTransport } from "../github.js";
 import { type Env, evaluatePull, triageIssue } from "../pipeline.js";
-import { type AuthInput, parseMode, resolveAuth } from "./auth.js";
+import {
+	type AuthInput,
+	parseConfigSource,
+	parseMode,
+	resolveAuth,
+} from "./auth.js";
 import { failed } from "./result.js";
 
 export const USAGE =
-	"usage: castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--dry-run]";
+	"usage: castellan <owner/repo> <number> [--issue] [--mode off|shadow|enforce] [--config-source repo|central|db] [--dry-run]";
 
 export interface CliArgs {
 	repo: { owner: string; repo: string };
@@ -18,6 +24,7 @@ export interface CliArgs {
 	issue: boolean;
 	dryRun: boolean;
 	mode?: Config["mode"];
+	configSource?: ConfigSource;
 }
 
 export function parseCli(argv: string[]): CliArgs {
@@ -27,6 +34,7 @@ export function parseCli(argv: string[]): CliArgs {
 		options: {
 			issue: { type: "boolean" },
 			mode: { type: "string" },
+			"config-source": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
@@ -48,6 +56,7 @@ export function parseCli(argv: string[]): CliArgs {
 		issue: values.issue ?? false,
 		dryRun: values["dry-run"] ?? false,
 		mode: parseMode(values.mode, "--mode"),
+		configSource: parseConfigSource(values["config-source"], "--config-source"),
 	};
 }
 
@@ -81,12 +90,17 @@ export function guarded(
 /** Returns the exit code. `--dry-run` forces shadow, writes nothing and prints the brief it would have posted. */
 export async function execute(
 	args: CliArgs,
-	base: Pick<Env, "transport" | "login" | "llm">,
+	base: Pick<Env, "transport" | "login" | "llm" | "centralLocator">,
 	print: (text: string) => void = console.log,
 ): Promise<number> {
 	const env: Env = args.dryRun
-		? { ...base, mode: "shadow", transport: guarded(base.transport, print) }
-		: { ...base, mode: args.mode };
+		? {
+				...base,
+				mode: "shadow",
+				configSource: args.configSource,
+				transport: guarded(base.transport, print),
+			}
+		: { ...base, mode: args.mode, configSource: args.configSource };
 	const opts = { dryRun: args.dryRun };
 	const result = args.issue
 		? await triageIssue(env, args.repo, args.number, opts)
@@ -126,13 +140,21 @@ export async function cli(
 		return 0;
 	}
 	const args = parseCli(argv);
+	args.configSource ??= parseConfigSource(
+		env.CASTELLAN_CONFIG_SOURCE || undefined,
+		"CASTELLAN_CONFIG_SOURCE",
+	);
 	const auth = await resolveAuth(
 		authFromEnv(env),
 		"GITHUB_TOKEN, or CASTELLAN_APP_ID, CASTELLAN_INSTALLATION_ID and CASTELLAN_PRIVATE_KEY",
 	);
 	return execute(
 		args,
-		{ ...auth, llm: { apiKey: env.ANTHROPIC_API_KEY } },
+		{
+			...auth,
+			llm: { apiKey: env.ANTHROPIC_API_KEY },
+			centralLocator: env.CASTELLAN_CENTRAL_CONFIG || undefined,
+		},
 		print,
 	);
 }

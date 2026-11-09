@@ -16,6 +16,8 @@ inputs:
     description: "Anthropic API key. Only used when .castellan.yml sets llm.provider to anthropic; the default is bedrock, which ignores it and needs ambient AWS credentials."
   mode:
     description: Overrides mode from .castellan.yml (off, shadow, enforce)
+  config-source:
+    description: Where policy comes from (repo, central, db). Default repo.
 runs:
   using: composite
   steps:
@@ -35,3 +37,4 @@ runs:
         INPUT_BOT_LOGIN: ${{ inputs.bot-login }}
         INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         INPUT_MODE: ${{ inputs.mode }}
+        INPUT_CONFIG_SOURCE: ${{ inputs.config-source }}

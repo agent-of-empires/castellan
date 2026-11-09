@@ -1,5 +1,11 @@
 import { type ActResult, act } from "./act.js";
 import { getOrRun, parseBlock } from "./cache.js";
+import {
+	type CentralResult,
+	type ConfigSource,
+	loadCentral,
+	parseLocator,
+} from "./central.js";
 import type { Brief } from "./comment.js";
 import { type Config, githubReader, loadConfig } from "./config.js";
 import {
@@ -26,6 +32,14 @@ export interface Env {
 	llm?: LlmDeps;
 	/** Overrides `mode` from `.castellan.yml`. */
 	mode?: Config["mode"];
+	/** Where policy comes from; `repo` when unset. */
+	configSource?: ConfigSource;
+	/** `CASTELLAN_CENTRAL_CONFIG`; unset means `<owner>/.github`. */
+	centralLocator?: string;
+	/** Memo for the central file, one per invocation so a merged change applies on the next event. */
+	centralCache?: Map<string, Promise<CentralResult>>;
+	/** For the S3 locator. */
+	fetch?: typeof fetch;
 }
 
 const CODEOWNERS_PATHS = [
@@ -47,7 +61,24 @@ async function repoConfig(env: Env, repoRef: Repo, ref?: string) {
 		...repoRef,
 	});
 	const read = githubReader(env.transport, repoRef);
-	const loaded = await loadConfig(ref ?? data.default_branch, read);
+	const source = env.configSource ?? "repo";
+	if (source === "db")
+		throw new Error("config source db is not implemented yet");
+	const central =
+		source === "central"
+			? await loadCentral(
+					{
+						transport: env.transport,
+						fetch: env.fetch,
+						cache: env.centralCache,
+					},
+					parseLocator(env.centralLocator, repoRef.owner),
+				)
+			: undefined;
+	const loaded =
+		central && !central.ok
+			? central
+			: await loadConfig(ref ?? data.default_branch, read, central?.doc);
 	const withMode = (config: Config) =>
 		env.mode ? { ...config, mode: env.mode } : config;
 	if (loaded.ok) {
@@ -63,6 +94,17 @@ async function repoConfig(env: Env, repoRef: Repo, ref?: string) {
 		defaultBranch: data.default_branch,
 		error: loaded.error,
 	};
+}
+
+/** The central file's path when this repo is the central git repo, so edits to it escalate. */
+function centralPathIn(env: Env, { owner, repo }: Repo) {
+	if (env.configSource !== "central") return undefined;
+	const loc = parseLocator(env.centralLocator, owner);
+	return loc.kind === "git" &&
+		loc.owner.toLowerCase() === owner.toLowerCase() &&
+		loc.repo.toLowerCase() === repo.toLowerCase()
+		? loc.path
+		: undefined;
 }
 
 async function classify(
@@ -153,7 +195,12 @@ export async function evaluatePull(
 				if (labels?.includes(config.labels.bug)) bugIssues.push(n);
 			}
 		}
-		const ctx: Context = { defaultBranch, codeowners, bugIssues };
+		const ctx: Context = {
+			defaultBranch,
+			codeowners,
+			bugIssues,
+			centralPath: centralPathIn(env, repoRef),
+		};
 
 		const required = await createGithubClient(
 			transport,

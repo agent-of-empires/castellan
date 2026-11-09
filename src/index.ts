@@ -1,3 +1,4 @@
+import { parseConfigSource } from "./adapters/auth.js";
 import { appLogin, installationTransport } from "./github.js";
 import { createHandler } from "./lambda.js";
 import { loadSecrets } from "./secrets.js";
@@ -7,6 +8,11 @@ export const handler = createHandler({
 		.split(",")
 		.map((r) => r.trim())
 		.filter(Boolean),
+	configSource: parseConfigSource(
+		process.env.CASTELLAN_CONFIG_SOURCE || undefined,
+		"CASTELLAN_CONFIG_SOURCE",
+	),
+	centralLocator: process.env.CASTELLAN_CENTRAL_CONFIG || undefined,
 	async loadSecrets() {
 		const arn = process.env.CASTELLAN_APP_SECRET_ARN;
 		if (!arn) throw new Error("CASTELLAN_APP_SECRET_ARN is not set");
