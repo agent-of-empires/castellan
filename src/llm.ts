@@ -67,6 +67,10 @@ export const DEFAULT_PRICES: Record<string, Price> = {
 	"us.anthropic.claude-haiku-5-5": { input: 0.1, output: 0.5 },
 	"claude-sonnet-5-5": { input: 2, output: 10 },
 	"claude-haiku-5-5": { input: 0.1, output: 0.5 },
+	"us.anthropic.claude-sonnet-4-6": { input: 3, output: 15 },
+	"claude-sonnet-4-6": { input: 3, output: 15 },
+	"us.anthropic.claude-haiku-4-5-20251001-v1:0": { input: 1, output: 5 },
+	"claude-haiku-4-5-20251001-v1:0": { input: 1, output: 5 },
 };
 
 export interface LlmDeps {

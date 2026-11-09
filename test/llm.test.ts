@@ -3,6 +3,7 @@ import { loadConfig } from "../src/config.js";
 import type { MessagesClient } from "../src/llm.js";
 import {
 	buildSystemPrompt,
+	DEFAULT_PRICES,
 	PROMPT_VERSION,
 	promptHash,
 	review,
@@ -171,6 +172,17 @@ describe("review", () => {
 		expect(await review(input, config, { client })).toMatchObject({
 			ok: false,
 			error: "budget",
+		});
+	});
+
+	it("has prices for the Sonnet 4.6 and Haiku 4.5 ids", () => {
+		const sonnet = { input: 3, output: 15 };
+		const haiku = { input: 1, output: 5 };
+		expect(DEFAULT_PRICES).toMatchObject({
+			"us.anthropic.claude-sonnet-4-6": sonnet,
+			"claude-sonnet-4-6": sonnet,
+			"us.anthropic.claude-haiku-4-5-20251001-v1:0": haiku,
+			"claude-haiku-4-5-20251001-v1:0": haiku,
 		});
 	});
 
