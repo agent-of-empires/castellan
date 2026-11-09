@@ -78,7 +78,7 @@ What remains: a small, in scope PR from an eligible author whose text persuades 
 - `maxCostUsd` (`LlmDeps` in `src/llm.ts`) is a per call guard: before sending, castellan estimates the input cost as `(system + user characters) / 4` tokens at the model's input price, and a call above the cap fails with `budget`, which escalates. Output tokens are not estimated; `max_tokens` bounds them at 2,048.
 - No shipped entrypoint (Lambda, Action, CLI) sets `maxCostUsd`, so this cap is not active today.
 - The `budget` failure is also what an unpriced model id produces. That check is always active: only the four default model ids have a price, so any other `models.*` value fails closed.
-- Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs in `enforce` (`shadow` makes one cached call per head for them too), no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda.
+- Spend is otherwise bounded by design: one review call per head SHA (cached), no call for rule escalated PRs in `enforce` (`shadow` makes one cached call per head for them too), no retries, a 30 second timeout, and 3 concurrent jobs on the Lambda. A failed model call is never cached, so later `check_suite` events retry it until one succeeds.
 - The RFC's monthly Bedrock cap ($150 hard stop, alert at $75) is not in this repo. [self-hosting.md](self-hosting.md#infrastructure) places the AWS budget in the infra repo, not in the code. There is no budget env var; the only cost guards are the per-call `maxCostUsd` cap and the alert-only AWS Budget (50% and 100% of $150).
 - Triage has no cache, so a `needs-triage` issue costs one model call on every run that reaches it.
 
