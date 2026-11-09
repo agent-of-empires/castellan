@@ -119,6 +119,81 @@ describe("review", () => {
 		});
 	});
 
+	it("parses when prose with braces surrounds the object", async () => {
+		const { client } = fake(
+			`Checked {the diff}. ${JSON.stringify(good)} Note: {done}`,
+		);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: good,
+		});
+	});
+
+	it("falls back to the whole text when a backtick quote ends the fence early", async () => {
+		const v = {
+			...good,
+			reasons: [{ severity: "nit", text: "use ```x``` here" }],
+		};
+		const { client } = fake(
+			`\`\`\`json\n${JSON.stringify(v)}\n\`\`\`\nNote {x}`,
+		);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: v,
+		});
+	});
+
+	it("parses a fenced reply followed by prose with braces", async () => {
+		const { client } = fake(
+			`\`\`\`json\n${JSON.stringify(good)}\n\`\`\`\nSee {x} and {y}.`,
+		);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: good,
+		});
+	});
+
+	it("respects braces and escapes inside strings", async () => {
+		const v = { ...good, reasons: [{ severity: "nit", text: 'a } "{" \\' }] };
+		const { client } = fake(`ok ${JSON.stringify(v)} {x}`);
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: true,
+			verdict: { reasons: [{ text: 'a } "{" \\' }] },
+		});
+	});
+
+	it("strips unknown reason keys and maps a null path to undefined", async () => {
+		const { client } = fake(
+			JSON.stringify({
+				...good,
+				reasons: [{ severity: "nit", text: "t", path: null, line: 3 }],
+			}),
+		);
+		const r = await review(input, await cfg(), { client });
+		expect(r).toMatchObject({ ok: true });
+		if (r.ok) {
+			expect(r.verdict.reasons[0]).toEqual({
+				severity: "nit",
+				text: "t",
+				path: undefined,
+			});
+			expect("line" in (r.verdict.reasons[0] ?? {})).toBe(false);
+		}
+	});
+
+	it("fails with a truncation detail on stop_reason max_tokens", async () => {
+		const create = vi.fn(async () => ({
+			...reply(JSON.stringify(good)),
+			stop_reason: "max_tokens",
+		}));
+		const client = { messages: { create } } as unknown as MessagesClient;
+		expect(await review(input, await cfg(), { client })).toMatchObject({
+			ok: false,
+			error: "invalid_output",
+			detail: "truncated at max_tokens",
+		});
+	});
+
 	it.each([
 		["prose", "no json here"],
 		["bad json", "{nope}"],

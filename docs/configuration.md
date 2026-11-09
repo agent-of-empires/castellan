@@ -291,7 +291,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 - PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates.
 - Labels, comments and review bodies are never fetched or shown to the model.
-- Review input: title, body, diff, and the body of the first linked issue (3,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 2,048 output tokens.
+- Review input: title, body, diff, and the body of the first linked issue (3,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 4,096 output tokens.
 - The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model)`. In `enforce` a rule escalated PR never reaches the model; in `shadow` it does, as advice.
 
 ### Triage
