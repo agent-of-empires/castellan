@@ -72,17 +72,19 @@ mode: shadow
 
 A PR over any limit escalates. All are positive integers.
 
-| Key                      | Default | Counts                                                                              |
-| ------------------------ | ------- | ----------------------------------------------------------------------------------- |
-| `limits.maxLines`        | `100`   | additions plus deletions across all files                                           |
-| `limits.maxFiles`        | `5`     | changed files. More than 200 files (the snapshot cap) always counts as over         |
-| `limits.maxTopLevelDirs` | `2`     | distinct first path segments; files at the repo root count as one extra "directory" |
+| Key                        | Default | Counts                                                                                                       |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `limits.maxLines`          | `100`   | additions plus deletions across all files                                                                    |
+| `limits.maxFiles`          | `5`     | changed files. More than 200 files (the snapshot cap) always counts as over                                  |
+| `limits.maxTopLevelDirs`   | `2`     | distinct first path segments; files at the repo root count as one extra "directory"                          |
+| `limits.staleCheckMinutes` | `60`    | minutes a check run may stay queued or in progress, counted from `started_at`, before it is stale (see Wait) |
 
 ```yaml
 limits:
   maxLines: 200
   maxFiles: 8
   maxTopLevelDirs: 3
+  staleCheckMinutes: 90
 ```
 
 ### `paths`
@@ -245,7 +247,8 @@ prompt:
 
 ```yaml
 mode: shadow
-limits: { maxLines: 100, maxFiles: 5, maxTopLevelDirs: 2 }
+limits:
+  { maxLines: 100, maxFiles: 5, maxTopLevelDirs: 2, staleCheckMinutes: 60 }
 paths:
   protected: ["src/auth/"]
   release: ["Cargo.toml"]
@@ -263,33 +266,36 @@ These are fixed in code. Changing one is a code change and a release.
 
 ### Evaluation order
 
-First rule with a hit decides; all hits of that one rule are listed, and the comment shows at most 3 reasons (`(+N more)` after). Skip rules run first, then `merge_conflict`, then the wait rule, then the other escalate rules, then the model.
+First rule with a hit decides; all hits of that one rule are listed, and the comment shows at most 3 reasons (`(+N more)` after). Skip rules run first, then `merge_conflict`, then `required_check_stale`, then the wait rule, then the other escalate rules, then the model.
 
 **Skip (nothing is posted):** `draft`, `skipped_author` (only `dependabot[bot]`), `non_default_base`, `skip_branch`, `mode_off`.
 
-**Wait (`ci_unsettled`):** CI has not settled when a required check has no run on the head SHA, or any check run is pending, queued or in progress. Nothing is posted and the model is not called; the `castellan` status is `pending` with "castellan: waiting for CI" ("shadow: waiting for CI" in `shadow`). On the Lambda the PR is evaluated again on `check_suite` completed, on `status` events and by the sweep, with no wait ceiling. The GitHub Action has no `check_suite` or `status` trigger, and its own job is in progress on the head during a `pull_request` run, so an Action install stays waiting until the scheduled run.
+**Wait (`ci_unsettled`):** CI has not settled when a required check has no run on the head SHA, or any check run is pending, queued or in progress. Only the latest run of each check name counts. A run that has been queued or in progress for more than `limits.staleCheckMinutes` since `started_at` is stale and does not wait: a stale required check escalates with a reason naming it (`required_check_stale`), a stale check that is not required is ignored. A run with no `started_at` is never stale, because the check-run API has no creation time. Nothing is posted and the model is not called; the `castellan` status is `pending` with "castellan: waiting for CI" ("shadow: waiting for CI" in `shadow`). On the Lambda the PR is evaluated again on `check_suite` completed, on `status` events and by the sweep, with no wait ceiling. The GitHub Action has no `check_suite` or `status` trigger, and its own job is in progress on the head during a `pull_request` run, so an Action install stays waiting until the scheduled run.
+
+The `castellan` commit status is posted only when its state or description changed.
 
 **Escalate, in order:**
 
-| Rule id                              | Escalates when                                                                                                                                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                       |
-| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth), or the central config file when the PR is in the central git repo                                         |
-| `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                    |
-| `github_dir`                         | a changed path is under a `.github/` directory                                                                                                               |
-| `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                          |
-| `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                         |
-| `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                        |
-| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                        |
-| `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                        |
-| `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                              |
-| `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                           |
-| `migration`                          | a path matches `paths.migrations`                                                                                                                            |
-| `generated_only`                     | every changed file is a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`), a `*.generated.*` file or under `dist/` or `generated/` |
-| `human_changes_requested`            | the latest non-comment review of any human reviewer is changes requested, on any commit                                                                      |
-| `body_truncated`                     | the PR body is over 3,000 characters                                                                                                                         |
-| `stacked`                            | the body contains `stacked on #<n>` (case insensitive)                                                                                                       |
-| `author_class`                       | see below                                                                                                                                                    |
+| Rule id                              | Escalates when                                                                                                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                                       |
+| `required_check_stale`               | a required check's latest run has been queued or in progress for more than `limits.staleCheckMinutes` (checked before the wait rule, so a stuck check does not wait forever) |
+| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth), or the central config file when the PR is in the central git repo                                                         |
+| `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                                    |
+| `github_dir`                         | a changed path is under a `.github/` directory                                                                                                                               |
+| `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                                          |
+| `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                                         |
+| `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                                        |
+| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                                        |
+| `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                                        |
+| `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                                              |
+| `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                                           |
+| `migration`                          | a path matches `paths.migrations`                                                                                                                                            |
+| `generated_only`                     | every changed file is a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`), a `*.generated.*` file or under `dist/` or `generated/`                 |
+| `human_changes_requested`            | the latest non-comment review of any human reviewer is changes requested, on any commit                                                                                      |
+| `body_truncated`                     | the PR body is over 3,000 characters                                                                                                                                         |
+| `stacked`                            | the body contains `stacked on #<n>` (case insensitive)                                                                                                                       |
+| `author_class`                       | see below                                                                                                                                                                    |
 
 Required checks come from the rulesets API only; classic branch protection is not read. Checks are every check run on the head SHA, not only the required ones. Commit statuses (not check runs) are not evaluated.
 
