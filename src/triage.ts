@@ -11,7 +11,7 @@ export interface TriageIssue {
 
 const SIZES = ["XS", "S", "M", "L", "XL"] as const;
 const PROMPT_VERSION = "1";
-const MARKER_PREFIX = "<!-- castellan triage ";
+const MARKER = /<!-- castellan triage \w+ -->\s*$/;
 
 type Classification = {
 	priority: string;
@@ -424,8 +424,7 @@ export async function triage(
 			? []
 			: list
 					.filter(
-						(m) =>
-							m.user?.login === opts.login && m.body?.includes(MARKER_PREFIX),
+						(m) => m.user?.login === opts.login && MARKER.test(m.body ?? ""),
 					)
 					.sort((a, b) => a.id - b.id);
 	const [existing] = ours(comments);
@@ -435,13 +434,13 @@ export async function triage(
 			{ owner, repo, issue_number: issue.number, body },
 		);
 		// Concurrent runs each saw no comment; keep the lowest id and drop the rest.
-		const [keep, ...surplus] = ours(
+		const [, ...surplus] = ours(
 			await transport.paginate(
 				"GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
 				{ owner, repo, issue_number: issue.number, per_page: 100 },
 			),
 		);
-		for (const m of keep ? surplus : []) {
+		for (const m of surplus) {
 			await transport
 				.request("DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}", {
 					owner,

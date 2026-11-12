@@ -732,6 +732,17 @@ describe("triage", () => {
 		expect(routes(w.request).filter((r) => r === COMMENT)).toHaveLength(2);
 	});
 
+	it("a bot comment that only quotes the marker is neither edited nor deleted", async () => {
+		const first = world();
+		await run(first, "");
+		const quoted = `${commentBody(first.request)}\n\nsee above`;
+		const w = world({ comments: [{ body: quoted, login: "castellan[bot]" }] });
+		await run(w, "");
+		expect(routes(w.request)).toContain(COMMENT);
+		expect(routes(w.request).filter((r) => r.startsWith("PATCH "))).toEqual([]);
+		expect(w.store.map((c) => c.body)).toContain(quoted);
+	});
+
 	it("makes no writes when comment lookup fails", async () => {
 		const w = world({ failComments: true });
 		await expect(run(w, "mode: enforce")).rejects.toThrow(

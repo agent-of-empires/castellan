@@ -20,19 +20,12 @@ interface Payload {
 		base?: { repo?: { full_name: string } | null };
 	};
 	issue?: { number: number };
-	label?: { name: string };
 }
 
-const run = (
-	env: Env,
-	repo: Repo,
-	kind: Item["kind"],
-	number: number,
-	label?: string,
-) =>
+const run = (env: Env, repo: Repo, kind: Item["kind"], number: number) =>
 	kind === "pr"
 		? evaluatePull(env, repo, number)
-		: triageIssue(env, repo, number, { label });
+		: triageIssue(env, repo, number);
 
 /**
  * `pull_request_target` is refused: it hands write secrets to code from a fork.
@@ -66,7 +59,7 @@ export async function handleEvent(
 				{
 					kind: "issue",
 					number,
-					result: await run(env, repo, "issue", number, payload.label?.name),
+					result: await run(env, repo, "issue", number),
 				},
 			];
 		}
