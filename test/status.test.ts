@@ -89,7 +89,11 @@ describe("postStatus", () => {
 	const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
 	const current = { context: "castellan", state: "success", description: "d" };
 	const send = (
-		status: { state: "success" | "pending"; description: string },
+		status: {
+			state: "success" | "pending";
+			description: string;
+			target_url?: string;
+		},
 		read: () => Promise<unknown>,
 	) => {
 		const request = vi.fn(async (route: string) => {
@@ -121,6 +125,33 @@ describe("postStatus", () => {
 	it("skips when state and description are identical", async () => {
 		expect(
 			await send({ state: "success", description: "d" }, served(current)),
+		).toHaveLength(0);
+	});
+
+	it("posts when only the target_url changed", async () => {
+		const old = { ...current, target_url: "https://x/old" };
+		expect(
+			await send(
+				{ state: "success", description: "d", target_url: "https://x/new" },
+				served(old),
+			),
+		).toHaveLength(1);
+	});
+
+	it("skips when the target_url is identical too", async () => {
+		const same = { ...current, target_url: "https://x/same" };
+		expect(
+			await send(
+				{ state: "success", description: "d", target_url: "https://x/same" },
+				served(same),
+			),
+		).toHaveLength(0);
+	});
+
+	it("skips on state and description alone when no target_url is passed", async () => {
+		const linked = { ...current, target_url: "https://x/old" };
+		expect(
+			await send({ state: "success", description: "d" }, served(linked)),
 		).toHaveLength(0);
 	});
 

@@ -41,7 +41,7 @@ export const waitingStatus = (mode: Config["mode"]) => ({
 	description: `${mode === "shadow" ? "shadow" : "castellan"}: waiting for CI`,
 });
 
-/** Posts a `castellan` status unless the current one has the same state and description. Best effort: any read error posts. */
+/** Posts a `castellan` status unless the current one has the same state and description (and target_url, when given). Best effort: any read error posts. */
 export async function postStatus(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
@@ -63,7 +63,9 @@ export async function postStatus(
 		.catch(() => undefined);
 	if (
 		current?.state === status.state &&
-		current.description === status.description
+		current.description === status.description &&
+		(status.target_url === undefined ||
+			current.target_url === status.target_url)
 	) {
 		return;
 	}
