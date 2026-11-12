@@ -29,8 +29,16 @@ function world({
 	required = [],
 	mergeable = true,
 }: World = {}) {
+	const posted = new Map<string, unknown>();
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
+			if (route === STATUS) {
+				posted.set(String(params.context), params);
+				return { data: {} };
+			}
+			if (route === "GET /repos/{owner}/{repo}/commits/{ref}/status") {
+				return { data: { statuses: [...posted.values()] } };
+			}
 			if (route === "GET /repos/{owner}/{repo}") {
 				return { data: { default_branch: "main" } };
 			}
@@ -116,6 +124,22 @@ function world({
 }
 
 describe("evaluatePull", () => {
+	it("posts no status when an unchanged PR is evaluated again", async () => {
+		const w = world();
+		await evaluatePull(w.env, repo, 3);
+		const count = () => w.routes().filter((r) => r === STATUS).length;
+		expect(count()).toBe(1);
+		await evaluatePull(w.env, repo, 3);
+		expect(count()).toBe(1);
+	});
+
+	it("posts no waiting status twice for the same wait", async () => {
+		const w = world({ checks: [{ name: "test", conclusion: null }] });
+		await evaluatePull(w.env, repo, 3);
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes().filter((r) => r === STATUS)).toHaveLength(1);
+	});
+
 	it("approves and queues a merge verdict in enforce mode", async () => {
 		const w = world();
 		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
