@@ -126,7 +126,7 @@ describe("buildSnapshot", () => {
 		);
 	});
 
-	it("keeps only the latest run of a check and reads started_at as epoch ms", async () => {
+	it("keeps every run, including an older pending one, and reads started_at as epoch ms", async () => {
 		const s = await snap({
 			checks: [
 				{
@@ -151,18 +151,14 @@ describe("buildSnapshot", () => {
 				conclusion: "success",
 				startedAt: Date.parse("2026-01-01T00:00:00Z"),
 			},
+			{
+				id: 2,
+				name: "codecov",
+				conclusion: "pending",
+				startedAt: Date.parse("2025-12-31T00:00:00Z"),
+			},
 			{ id: 9, name: "lint", conclusion: "success", startedAt: null },
 		]);
-	});
-
-	it("keeps the latest run even when the API lists it last", async () => {
-		const s = await snap({
-			checks: [
-				{ id: 2, name: "codecov", conclusion: "in_progress" },
-				{ id: 5, name: "codecov", conclusion: "success" },
-			],
-		});
-		expect(s.checks.map((c) => c.id)).toEqual([5]);
 	});
 
 	it("keeps an older completed run next to a newer pass, and a failed one still escalates", async () => {

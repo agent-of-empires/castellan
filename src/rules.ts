@@ -167,14 +167,15 @@ const CONFLICT: Record<string, Rule> = {
 	merge_conflict: (s) => when(s.mergeable === false, "PR has merge conflicts"),
 };
 
-/** Before `wait`, so a stuck required check escalates instead of waiting forever. */
+/** Before `wait`, so a stuck required check escalates instead of waiting forever. A newer same-name run decides instead. */
 const STALE_REQUIRED: Record<string, Rule> = {
 	required_check_stale: (s, c, required, x) =>
 		s.checks
 			.filter(
 				(k) =>
 					required.includes(k.name) &&
-					isStale(k, x.now, c.limits.staleCheckMinutes),
+					isStale(k, x.now, c.limits.staleCheckMinutes) &&
+					!s.checks.some((o) => o.name === k.name && (o.id ?? 0) > (k.id ?? 0)),
 			)
 			.map((k) => ({
 				text: `required check ${k.name} is stale (${k.conclusion} for more than ${c.limits.staleCheckMinutes} min)`,

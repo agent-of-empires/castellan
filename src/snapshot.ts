@@ -32,7 +32,7 @@ export interface Snapshot {
 	filesTruncated: boolean;
 	diff: string;
 	diffTruncated: boolean;
-	/** Check runs on the head SHA, not only required ones; an older pending run is dropped once a newer one exists. */
+	/** Check runs on the head SHA, not only required ones; every run is kept. */
 	checks: {
 		id?: number;
 		name: string;
@@ -55,25 +55,6 @@ function linkedIssues(body: string): number[] {
 		(m) => Number(m[1]),
 	);
 	return [...new Set(nums)];
-}
-
-/** A pending run is dropped once a newer run of the same name exists; completed runs all count. */
-function latestRuns<
-	T extends { id: number; name: string; conclusion: string | null },
->(runs: T[]): T[] {
-	const newest = new Map<string, number>();
-	for (const r of runs) {
-		newest.set(r.name, Math.max(newest.get(r.name) ?? r.id, r.id));
-	}
-	return runs.filter(
-		(r) =>
-			!(
-				(r.conclusion === null ||
-					r.conclusion === "queued" ||
-					r.conclusion === "in_progress") &&
-				r.id < (newest.get(r.name) ?? r.id)
-			),
-	);
 }
 
 /** GitHub answers 406 `too_large` when a PR diff exceeds 20000 lines. */
@@ -174,7 +155,7 @@ export async function buildSnapshot(
 		filesTruncated: files.length > FILES_CAP,
 		diff: diffText.text,
 		diffTruncated: diffText.truncated,
-		checks: latestRuns(checks).map((c) => ({
+		checks: checks.map((c) => ({
 			id: c.id,
 			name: c.name,
 			conclusion: c.conclusion ?? "pending",

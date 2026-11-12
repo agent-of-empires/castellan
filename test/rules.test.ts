@@ -153,6 +153,113 @@ describe("stale checks", () => {
 	});
 });
 
+describe("same-name runs on one sha", () => {
+	const older = (conclusion: string, minutes?: number) => ({
+		id: 1,
+		name: "ci",
+		conclusion,
+		startedAt: minutes === undefined ? null : ago(minutes),
+	});
+	const newer = (conclusion: string, minutes?: number) => ({
+		id: 2,
+		name: "ci",
+		conclusion,
+		startedAt: minutes === undefined ? null : ago(minutes),
+	});
+
+	it("a fresh pending run waits even when a newer run passed", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 2), newer("success")] }),
+		);
+		expect(d.outcome).toBe("wait");
+		expect(rulesOf(d)).toEqual(["ci_unsettled"]);
+	});
+
+	it("a stale required run is skipped and the newer pass decides", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("success")] }),
+		);
+		expect(d).toEqual({ outcome: "candidate", reasons: [] });
+	});
+
+	it("a stale required run is skipped whatever the list order", () => {
+		const d = run(
+			snap({ checks: [newer("success"), older("in_progress", 61)] }),
+		);
+		expect(d.outcome).toBe("candidate");
+	});
+
+	it("a stale required run with a newer fresh pending run waits", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("in_progress", 2)] }),
+		);
+		expect(rulesOf(d)).toEqual(["ci_unsettled"]);
+	});
+
+	it("a stale required run with a newer failed run escalates via the failed required check", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("failure")] }),
+		);
+		expect(d.outcome).toBe("escalate");
+		expect(rulesOf(d)).toEqual(["required_check"]);
+	});
+
+	it("a stale required run with a newer stale run escalates as stale", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 90), newer("in_progress", 61)] }),
+		);
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+		expect(d.reasons).toHaveLength(1);
+	});
+
+	it("a newer run of another name does not excuse a stale required run", () => {
+		const d = run(
+			snap({
+				checks: [
+					older("in_progress", 61),
+					{ id: 2, name: "docs", conclusion: "success" },
+				],
+			}),
+		);
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+	});
+
+	it("a run with no id counts as 0 and is excused by any newer run", () => {
+		const d = run(
+			snap({
+				checks: [
+					{ name: "ci", conclusion: "in_progress", startedAt: ago(61) },
+					newer("success"),
+				],
+			}),
+		);
+		expect(d.outcome).toBe("candidate");
+	});
+
+	it("a stale non-required run with a newer pass does not block", () => {
+		const d = run(
+			snap({
+				checks: [
+					{ id: 1, name: "ci", conclusion: "success" },
+					{
+						id: 2,
+						name: "docs",
+						conclusion: "in_progress",
+						startedAt: ago(61),
+					},
+					{ id: 3, name: "docs", conclusion: "success" },
+				],
+			}),
+		);
+		expect(d).toEqual({ outcome: "candidate", reasons: [] });
+	});
+
+	it("an older failed run still escalates next to a newer pass", () => {
+		const d = run(snap({ checks: [older("failure"), newer("success")] }));
+		expect(rulesOf(d)).toContain("check_failing");
+	});
+});
+
 describe("wait", () => {
 	const waits = (over: Partial<Snapshot>, required = ["ci"]) => {
 		const d = run(snap(over), config, required);
