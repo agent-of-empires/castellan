@@ -11,6 +11,7 @@ const base = z.strictObject({
 			maxLines: z.number().int().positive().default(100),
 			maxFiles: z.number().int().positive().default(5),
 			maxTopLevelDirs: z.number().int().positive().default(2),
+			staleCheckMinutes: z.number().int().positive().default(60),
 		})
 		.prefault({}),
 	paths: z

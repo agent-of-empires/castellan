@@ -32,9 +32,14 @@ export interface Snapshot {
 	filesTruncated: boolean;
 	diff: string;
 	diffTruncated: boolean;
-	/** Every check run on the head SHA, not only required ones. */
-	/** `id` orders runs of one check; the API returns newest first. */
-	checks: { id?: number; name: string; conclusion: string }[];
+	/** The latest run of each check on the head SHA, not only required ones. */
+	checks: {
+		id?: number;
+		name: string;
+		conclusion: string;
+		/** Epoch ms of `started_at`; null when missing (the API has no creation time). */
+		startedAt?: number | null;
+	}[];
 	/** State and commit only; review bodies are human text and are left out. */
 	reviews: { login: string; state: string; commitId: string }[];
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
@@ -50,6 +55,16 @@ function linkedIssues(body: string): number[] {
 		(m) => Number(m[1]),
 	);
 	return [...new Set(nums)];
+}
+
+/** A check re-run adds a run with the same name; only the highest id counts. */
+function latestRuns<T extends { id: number; name: string }>(runs: T[]): T[] {
+	const byName = new Map<string, T>();
+	for (const r of runs) {
+		const prev = byName.get(r.name);
+		if (!prev || r.id > prev.id) byName.set(r.name, r);
+	}
+	return [...byName.values()];
 }
 
 /** GitHub answers 406 `too_large` when a PR diff exceeds 20000 lines. */
@@ -150,10 +165,11 @@ export async function buildSnapshot(
 		filesTruncated: files.length > FILES_CAP,
 		diff: diffText.text,
 		diffTruncated: diffText.truncated,
-		checks: checks.map((c) => ({
+		checks: latestRuns(checks).map((c) => ({
 			id: c.id,
 			name: c.name,
 			conclusion: c.conclusion ?? "pending",
+			startedAt: c.started_at ? Date.parse(c.started_at) : null,
 		})),
 		reviews: reviewList,
 		codeRabbit:
