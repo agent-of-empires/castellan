@@ -158,11 +158,30 @@ describe("buildSnapshot", () => {
 	it("keeps the latest run even when the API lists it last", async () => {
 		const s = await snap({
 			checks: [
-				{ id: 2, name: "codecov", conclusion: "success" },
-				{ id: 5, name: "codecov", conclusion: "in_progress" },
+				{ id: 2, name: "codecov", conclusion: "in_progress" },
+				{ id: 5, name: "codecov", conclusion: "success" },
 			],
 		});
 		expect(s.checks.map((c) => c.id)).toEqual([5]);
+	});
+
+	it("keeps an older completed run next to a newer pass, and a failed one still escalates", async () => {
+		const s = await snap({
+			checks: [
+				{ id: 2, name: "build", conclusion: "failure" },
+				{ id: 5, name: "build", conclusion: "success" },
+			],
+		});
+		expect(s.checks.map((c) => c.id)).toEqual([2, 5]);
+		const c = await loadConfig("main", async () => "");
+		if (!c.ok) throw new Error(c.error);
+		const d = evaluate(s, c.config, [], {
+			now: 0,
+			defaultBranch: "main",
+			codeowners: [],
+			bugIssues: [],
+		});
+		expect(d.reasons.map((r) => r.rule)).toContain("check_failing");
 	});
 
 	it("requests every paginated list with per_page 100", async () => {
