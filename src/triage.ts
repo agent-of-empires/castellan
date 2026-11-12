@@ -11,6 +11,7 @@ export interface TriageIssue {
 
 const SIZES = ["XS", "S", "M", "L", "XL"] as const;
 const PROMPT_VERSION = "1";
+const MARKER = /<!-- castellan triage \w+ -->\s*$/;
 
 type Classification = {
 	priority: string;
@@ -41,7 +42,14 @@ export interface Proposal {
  * `unresolved` names the config value (project, field or option) not found on the project.
  */
 export type TriageResult =
-	| { ok: true; skipped: "off" | "no needs-triage label" | "nothing missing" }
+	| {
+			ok: true;
+			skipped:
+				| "off"
+				| "no needs-triage label"
+				| "nothing missing"
+				| "other label";
+	  }
 	| { ok: true; proposal: Proposal }
 	| { ok: false; error: FailureReason | "unresolved"; detail?: string };
 
@@ -410,22 +418,43 @@ export async function triage(
 	lines.push("", "Fit is not set by triage; it stays with maintainers.");
 	// Ignore model prose when identifying the same outcome.
 	const marker = `<!-- castellan triage ${hashOf([labels, fields, notSet, c.readyForAgent.suggest])} -->`;
-	if (
-		!comments.some(
-			(comment) =>
-				opts.login !== undefined &&
-				comment.user?.login === opts.login &&
-				comment.body?.trimEnd().endsWith(marker),
-		)
-	) {
+	const body = [...lines, "", marker].join("\n");
+	const ours = (list: typeof comments) =>
+		opts.login === undefined
+			? []
+			: list
+					.filter(
+						(m) => m.user?.login === opts.login && MARKER.test(m.body ?? ""),
+					)
+					.sort((a, b) => a.id - b.id);
+	const [existing] = ours(comments);
+	if (!existing) {
 		await transport.request(
 			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-			{
-				owner,
-				repo,
-				issue_number: issue.number,
-				body: [...lines, "", marker].join("\n"),
-			},
+			{ owner, repo, issue_number: issue.number, body },
+		);
+		// Concurrent runs each saw no comment; keep the lowest id and drop the rest.
+		const [, ...surplus] = ours(
+			await transport.paginate(
+				"GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+				{ owner, repo, issue_number: issue.number, per_page: 100 },
+			),
+		);
+		for (const m of surplus) {
+			await transport
+				.request("DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+					owner,
+					repo,
+					comment_id: m.id,
+				})
+				.catch((e) => {
+					if ((e as { status?: number }).status !== 404) throw e;
+				});
+		}
+	} else if (!existing.body?.trimEnd().endsWith(marker)) {
+		await transport.request(
+			"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
+			{ owner, repo, comment_id: existing.id, body },
 		);
 	}
 

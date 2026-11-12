@@ -508,6 +508,28 @@ describe("triageIssue", () => {
 	});
 });
 
+describe("triageIssue label filter", () => {
+	it("a labeled event for another label starts no triage and no model call", async () => {
+		const w = world();
+		w.env.transport.graphql = vi.fn() as never;
+		expect(await triageIssue(w.env, repo, 5, { label: "bug" })).toEqual({
+			ok: true,
+			skipped: "other label",
+		});
+		expect(w.env.transport.graphql).not.toHaveBeenCalled();
+	});
+
+	it("a labeled event for needs-triage triages", async () => {
+		const w = world();
+		w.env.transport.graphql = vi.fn(async () => ({
+			repository: { issue: { id: "I", labels: { nodes: [] } } },
+		})) as never;
+		expect(
+			await triageIssue(w.env, repo, 5, { label: "needs-triage" }),
+		).toEqual({ ok: true, skipped: "no needs-triage label" });
+	});
+});
+
 describe("listWork", () => {
 	it("lists open PRs and needs-triage issues, dropping PRs from the issue list", async () => {
 		const w = world();

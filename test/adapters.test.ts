@@ -314,6 +314,10 @@ describe("dry run guard", () => {
 		const queries: string[] = [];
 		const graphql = vi.fn(async (q: string) => {
 			queries.push(q);
+			if (q.includes("addProjectV2ItemById")) {
+				return { addProjectV2ItemById: { item: { id: "ITEM" } } };
+			}
+			if (q.includes("updateProjectV2ItemFieldValue")) return {};
 			if (q.includes("pageInfo")) {
 				return {
 					repository: {
@@ -366,7 +370,7 @@ describe("dry run guard", () => {
 		const transport = {
 			request,
 			graphql,
-			paginate: vi.fn(),
+			paginate: vi.fn(async () => []),
 		} as unknown as GithubTransport;
 		const client = {
 			messages: {
@@ -394,6 +398,20 @@ describe("dry run guard", () => {
 			w.request.mock.calls.some((c) => !String(c[0]).startsWith("GET ")),
 		).toBe(false);
 		expect(out.join("\n")).toContain('"proposal"');
+	});
+
+	it("an issues labeled event for another label still triages a needs-triage issue", async () => {
+		const w = triageWorld();
+		const payload = { issue: { number: 7 }, label: { name: "area:server" } };
+		const items = await handleEvent(
+			"issues",
+			payload,
+			{ transport: w.transport, login, llm: { client: w.client } },
+			repo,
+		);
+		expect(items).toMatchObject([
+			{ kind: "issue", number: 7, result: { ok: true, proposal: {} } },
+		]);
 	});
 
 	it("refuses a GraphQL mutation outright and passes queries through", async () => {
