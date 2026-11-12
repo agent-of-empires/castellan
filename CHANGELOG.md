@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/agent-of-empires/castellan/compare/v0.5.0...v0.5.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **status:** post status only on change and time out stale check runs ([#113](https://github.com/agent-of-empires/castellan/issues/113)) ([9d6fb1c](https://github.com/agent-of-empires/castellan/commit/9d6fb1c288aadafd237e682323bba3b21ddd0f5c))
+* **triage:** keep one triage comment per issue and run triage once ([#114](https://github.com/agent-of-empires/castellan/issues/114)) ([dbe24f8](https://github.com/agent-of-empires/castellan/commit/dbe24f8ea66d745e7cd5fb311bbf81ed58f4a4c0))
+
 ## [0.5.0](https://github.com/agent-of-empires/castellan/compare/v0.4.0...v0.5.0) (2026-11-09)
 
 
