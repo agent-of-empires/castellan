@@ -427,7 +427,9 @@ describe("stale required check", () => {
 	const stale = () =>
 		world({
 			yaml: "mode: shadow",
-			checks: [{ name: "test", conclusion: "in_progress", started_at: STARTED }],
+			checks: [
+				{ name: "test", conclusion: "in_progress", started_at: STARTED },
+			],
 			required: ["test"],
 		});
 

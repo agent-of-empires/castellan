@@ -276,26 +276,26 @@ The `castellan` commit status is posted only when its state or description chang
 
 **Escalate, in order:**
 
-| Rule id                              | Escalates when                                                                                                                                                               |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                                       |
+| Rule id                              | Escalates when                                                                                                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `merge_conflict`                     | GitHub reports the PR as not mergeable (checked before the wait rule, because `pull_request` workflows do not run without a merge ref)                                |
 | `required_check_stale`               | a required check's run has been queued or in progress for more than `limits.staleCheckMinutes` (checked before the wait rule, so a stuck check does not wait forever) |
-| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth), or the central config file when the PR is in the central git repo                                                         |
-| `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                                    |
-| `github_dir`                         | a changed path is under a `.github/` directory                                                                                                                               |
-| `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                                          |
-| `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                                         |
-| `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                                        |
-| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                                        |
-| `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                                        |
-| `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                                              |
-| `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                                           |
-| `migration`                          | a path matches `paths.migrations`                                                                                                                                            |
-| `generated_only`                     | every changed file is a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`), a `*.generated.*` file or under `dist/` or `generated/`                 |
-| `human_changes_requested`            | the latest non-comment review of any human reviewer is changes requested, on any commit                                                                                      |
-| `body_truncated`                     | the PR body is over 3,000 characters                                                                                                                                         |
-| `stacked`                            | the body contains `stacked on #<n>` (case insensitive)                                                                                                                       |
-| `author_class`                       | see below                                                                                                                                                                    |
+| `castellan_config`                   | a changed path is `.castellan.yml` (at any depth), or the central config file when the PR is in the central git repo                                                  |
+| `codeowners_file`                    | a changed path is `CODEOWNERS`, `.github/CODEOWNERS` or `docs/CODEOWNERS`                                                                                             |
+| `github_dir`                         | a changed path is under a `.github/` directory                                                                                                                        |
+| `protected_path`                     | a path matches `paths.protected` or `paths.release`                                                                                                                   |
+| `protected_owner`                    | a path is owned by `teams.protected`                                                                                                                                  |
+| `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                                 |
+| `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                                 |
+| `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                                 |
+| `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                                       |
+| `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                                    |
+| `migration`                          | a path matches `paths.migrations`                                                                                                                                     |
+| `generated_only`                     | every changed file is a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`), a `*.generated.*` file or under `dist/` or `generated/`          |
+| `human_changes_requested`            | the latest non-comment review of any human reviewer is changes requested, on any commit                                                                               |
+| `body_truncated`                     | the PR body is over 3,000 characters                                                                                                                                  |
+| `stacked`                            | the body contains `stacked on #<n>` (case insensitive)                                                                                                                |
+| `author_class`                       | see below                                                                                                                                                             |
 
 Required checks come from the rulesets API only; classic branch protection is not read. Checks are every check run on the head SHA, not only the required ones. Commit statuses (not check runs) are not evaluated.
 
