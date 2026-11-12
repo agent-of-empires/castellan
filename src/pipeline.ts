@@ -310,19 +310,23 @@ export async function triageIssue(
 	env: Env,
 	repoRef: Repo,
 	issueNumber: number,
-	opts: { dryRun?: boolean } = {},
+	opts: { dryRun?: boolean; label?: string } = {},
 ): Promise<TriageResult | "closed"> {
 	const issue = await getIssue(env, repoRef, issueNumber);
 	if (issue?.state !== "open" || issue.pull_request) return "closed";
 	const { config, error } = await repoConfig(env, repoRef);
 	if (error) throw new Error(error);
+	// A `labeled` event for any other label is not a triage trigger.
+	if (opts.label !== undefined && opts.label !== config.labels.needsTriage) {
+		return { ok: true, skipped: "other label" };
+	}
 	return triage(
 		{ number: issueNumber, title: issue.title, body: issue.body ?? "" },
 		config,
 		env.transport,
 		repoRef,
 		env.llm,
-		{ ...opts, login: env.login },
+		{ dryRun: opts.dryRun, login: env.login },
 	);
 }
 

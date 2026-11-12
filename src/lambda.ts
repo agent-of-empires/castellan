@@ -50,6 +50,7 @@ interface Payload {
 		pull_requests: { number: number; base: { repo: { id: number } } }[];
 	};
 	issue?: { number: number; state?: string; pull_request?: object };
+	label?: { name: string };
 	sender?: { login: string };
 	sha?: string;
 	context?: string;
@@ -241,13 +242,20 @@ export function createHandler(deps: Deps) {
 		const issue = p.issue?.number;
 		const jobs: Job[] =
 			name === "issues" &&
-			(p.action === "opened" ||
-				// Our own label writes would each start another triage run.
-				(p.action === "labeled" && p.sender?.login !== e.login)) &&
+			// Not `opened`: an issue created with labels also sends `labeled` for each,
+			// and triage only runs while it has needs-triage, which always sends `labeled`.
+			// Our own label writes would each start another triage run.
+			p.action === "labeled" &&
+			p.sender?.login !== e.login &&
 			issue &&
 			p.issue?.state !== "closed" &&
 			!p.issue?.pull_request
-				? [[`issue ${full}#${issue}`, () => triageIssue(e, repoRef, issue)]]
+				? [
+						[
+							`issue ${full}#${issue}`,
+							() => triageIssue(e, repoRef, issue, { label: p.label?.name }),
+						],
+					]
 				: (await pullsFor(name, p, e)).map((n) => [
 						`pull ${full}#${n}`,
 						() => evaluatePull(e, repoRef, n),

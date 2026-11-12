@@ -68,7 +68,7 @@ The org side of `enforce` (the `main` and `main-review` ruleset split, the App a
 | `check_suite`         | `completed`. A suite with no attached PR (fork PRs) is mapped to open PRs by head SHA                                                                |
 | `pull_request_review` | `submitted`, except the App's own review                                                                                                             |
 | `status`              | any, except the `castellan` context itself                                                                                                           |
-| `issues`              | `opened`, `labeled`: triage. Without `needs-triage` it exits early; sweep is backup                                                                  |
+| `issues`              | `labeled`: triage, only when the label is `labels.needsTriage`; sweep is backup                                                                      |
 | `{"source":"sweep"}`  | every open PR and `needs-triage` issue in `CASTELLAN_REPOS` (an `owner/*` entry is expanded through the installation, deduped against exact entries) |
 
 `check_run` is not routed: it fires once per check, so one CI run would start many parallel evaluations of one head. `check_suite` fires once.
@@ -94,7 +94,7 @@ The SDKs are bundled, not externalized, so the zip does not depend on the Lambda
 Copy [templates/castellan.yml](../templates/castellan.yml) into `.github/workflows/`. It runs on:
 
 - `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`),
-- `issues` (`opened`, `labeled`),
+- `issues` (`labeled`),
 - a 30 minute `schedule` sweep of every open PR (the rules skip drafts) and every issue labeled `needs-triage`, and `workflow_dispatch`.
 
 One item failing does not stop the sweep; the run exits 1 if any item failed. Runs are serialized per PR or issue.
@@ -114,7 +114,7 @@ One item failing does not stop the sweep; the run exits 1 if any item failed. Ru
 
 **Fork PRs.** `pull_request_target` is refused in code, because it would give write secrets to fork code. A `pull_request` from a fork does nothing (its token is read only); the next sweep evaluates it.
 
-**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. In the Action, a label added with `github.token` does not start other workflows, so the sweep is what triages it. The Lambda triages on the `issues.labeled` event.
+**Triage.** Also copy [templates/needs-triage.yml](../templates/needs-triage.yml), which adds `needs-triage` when an issue is opened. The target repo must already have a label with the name in `labels.needsTriage`; the workflow does not create it. In the Action, a label added with `github.token` does not start other workflows, so the sweep is what triages it. The Lambda triages on `issues.labeled` when the label is `labels.needsTriage`; `issues.opened` is not a trigger, because an issue created with labels also sends `labeled` for each.
 
 **Cost of running it.** The composite action runs `pnpm install` and `pnpm build` on every run, and sets up Node 22, which replaces the caller's Node version. Move to a release built `dist` if either matters. The template pins a release (`@v0.1.0`).
 

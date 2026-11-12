@@ -263,19 +263,39 @@ describe("routing", () => {
 		expect(pulls()).toEqual([]);
 	});
 
-	it("issues opened or labeled triages, other actions do not", async () => {
+	it("issues labeled triages with the label name, opened and other actions do not", async () => {
 		const { res } = await run("issues", {
 			action: "opened",
 			issue: { number: 11 },
 		});
-		await run("issues", { action: "labeled", issue: { number: 12 } });
+		await run("issues", {
+			action: "labeled",
+			issue: { number: 12 },
+			label: { name: "needs-triage" },
+		});
 		await run("issues", { action: "closed", issue: { number: 13 } });
 		expect(res.statusCode).toBe(200);
-		expect(vi.mocked(triageIssue).mock.calls.map((c) => [c[1], c[2]])).toEqual([
-			[{ owner: "o", repo: "r" }, 11],
-			[{ owner: "o", repo: "r" }, 12],
-		]);
+		expect(
+			vi.mocked(triageIssue).mock.calls.map((c) => [c[1], c[2], c[3]]),
+		).toEqual([[{ owner: "o", repo: "r" }, 12, { label: "needs-triage" }]]);
 		expect(evaluatePull).not.toHaveBeenCalled();
+	});
+
+	it("an issue opened with three labels sends opened plus one labeled each; only labeled jobs start, each carrying its label", async () => {
+		await run("issues", { action: "opened", issue: { number: 20 } });
+		for (const name of ["bug", "needs-triage", "area:server"]) {
+			await run("issues", {
+				action: "labeled",
+				issue: { number: 20 },
+				label: { name },
+				sender: { login: "alice" },
+			});
+		}
+		expect(vi.mocked(triageIssue).mock.calls.map((c) => c[3])).toEqual([
+			{ label: "bug" },
+			{ label: "needs-triage" },
+			{ label: "area:server" },
+		]);
 	});
 
 	it("issues labeled by castellan itself is ignored, by a human or another label is not", async () => {
