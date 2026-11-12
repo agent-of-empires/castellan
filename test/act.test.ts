@@ -32,7 +32,12 @@ const snapshot = (paths: string[] = ["src/a.ts"]) =>
 		})),
 	}) as Snapshot;
 
-const ctx: Context = { defaultBranch: "main", codeowners: [], bugIssues: [] };
+const ctx: Context = {
+	now: 0,
+	defaultBranch: "main",
+	codeowners: [],
+	bugIssues: [],
+};
 
 const brief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 	outcome: { verdict, reasons: [] },

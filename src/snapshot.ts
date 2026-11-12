@@ -32,9 +32,14 @@ export interface Snapshot {
 	filesTruncated: boolean;
 	diff: string;
 	diffTruncated: boolean;
-	/** Every check run on the head SHA, not only required ones. */
-	/** `id` orders runs of one check; the API returns newest first. */
-	checks: { id?: number; name: string; conclusion: string }[];
+	/** Check runs on the head SHA, not only required ones; every run is kept. */
+	checks: {
+		id?: number;
+		name: string;
+		conclusion: string;
+		/** Epoch ms of `started_at`; null when missing (the API has no creation time). */
+		startedAt?: number | null;
+	}[];
 	/** State and commit only; review bodies are human text and are left out. */
 	reviews: { login: string; state: string; commitId: string }[];
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
@@ -154,6 +159,7 @@ export async function buildSnapshot(
 			id: c.id,
 			name: c.name,
 			conclusion: c.conclusion ?? "pending",
+			startedAt: c.started_at ? Date.parse(c.started_at) : null,
 		})),
 		reviews: reviewList,
 		codeRabbit:

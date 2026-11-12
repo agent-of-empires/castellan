@@ -41,6 +41,43 @@ export const waitingStatus = (mode: Config["mode"]) => ({
 	description: `${mode === "shadow" ? "shadow" : "castellan"}: waiting for CI`,
 });
 
+/** Posts a `castellan` status unless the current one has the same state and description (and target_url, when given). Best effort: any read error posts. */
+export async function postStatus(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	sha: string,
+	status: {
+		state: "success" | "pending";
+		description: string;
+		target_url?: string;
+	},
+) {
+	const current = await transport
+		.request("GET /repos/{owner}/{repo}/commits/{ref}/status", {
+			owner,
+			repo,
+			ref: sha,
+			per_page: 100,
+		})
+		.then((r) => r.data.statuses.find((s) => s.context === STATUS_CONTEXT))
+		.catch(() => undefined);
+	if (
+		current?.state === status.state &&
+		current.description === status.description &&
+		(status.target_url === undefined ||
+			current.target_url === status.target_url)
+	) {
+		return;
+	}
+	await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
+		owner,
+		repo,
+		sha,
+		context: STATUS_CONTEXT,
+		...status,
+	});
+}
+
 export async function setStatus(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
@@ -49,11 +86,7 @@ export async function setStatus(
 	mode: Config["mode"],
 	targetUrl: string,
 ) {
-	await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
-		owner,
-		repo,
-		sha,
-		context: STATUS_CONTEXT,
+	await postStatus(transport, { owner, repo }, sha, {
 		target_url: targetUrl,
 		...statusFor(outcome.verdict, mode, outcome.reasons[0]?.text),
 	});

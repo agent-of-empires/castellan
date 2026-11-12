@@ -301,6 +301,7 @@ export async function collectCases(
 					reviews: draft.reviews.filter((r) => r.login.endsWith("[bot]")),
 				},
 				context: {
+					now: now.getTime(),
 					defaultBranch: info.default_branch,
 					codeowners: [],
 					bugIssues: [],

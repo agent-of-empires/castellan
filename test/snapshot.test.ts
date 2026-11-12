@@ -116,14 +116,68 @@ describe("buildSnapshot", () => {
 			files: [{ path: "a.ts", status: "modified", additions: 2, deletions: 1 }],
 		});
 		expect(s.checks).toEqual([
-			{ name: "lint", conclusion: "success" },
-			{ name: "pr-title-check", conclusion: "skipped" },
-			{ name: "slow", conclusion: "pending" },
+			{ name: "lint", conclusion: "success", startedAt: null },
+			{ name: "pr-title-check", conclusion: "skipped", startedAt: null },
+			{ name: "slow", conclusion: "pending", startedAt: null },
 		]);
 		expect(paginate).toHaveBeenCalledWith(
 			"GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
 			expect.objectContaining({ ref: "abc" }),
 		);
+	});
+
+	it("keeps every run, including an older pending one, and reads started_at as epoch ms", async () => {
+		const s = await snap({
+			checks: [
+				{
+					id: 5,
+					name: "codecov",
+					conclusion: "success",
+					started_at: "2026-01-01T00:00:00Z",
+				},
+				{
+					id: 2,
+					name: "codecov",
+					conclusion: null,
+					started_at: "2025-12-31T00:00:00Z",
+				},
+				{ id: 9, name: "lint", conclusion: "success", started_at: null },
+			],
+		});
+		expect(s.checks).toEqual([
+			{
+				id: 5,
+				name: "codecov",
+				conclusion: "success",
+				startedAt: Date.parse("2026-01-01T00:00:00Z"),
+			},
+			{
+				id: 2,
+				name: "codecov",
+				conclusion: "pending",
+				startedAt: Date.parse("2025-12-31T00:00:00Z"),
+			},
+			{ id: 9, name: "lint", conclusion: "success", startedAt: null },
+		]);
+	});
+
+	it("keeps an older completed run next to a newer pass, and a failed one still escalates", async () => {
+		const s = await snap({
+			checks: [
+				{ id: 2, name: "build", conclusion: "failure" },
+				{ id: 5, name: "build", conclusion: "success" },
+			],
+		});
+		expect(s.checks.map((c) => c.id)).toEqual([2, 5]);
+		const c = await loadConfig("main", async () => "");
+		if (!c.ok) throw new Error(c.error);
+		const d = evaluate(s, c.config, [], {
+			now: 0,
+			defaultBranch: "main",
+			codeowners: [],
+			bugIssues: [],
+		});
+		expect(d.reasons.map((r) => r.rule)).toContain("check_failing");
 	});
 
 	it("requests every paginated list with per_page 100", async () => {
@@ -272,6 +326,7 @@ describe("guards", () => {
 		const r = await loadConfig("main", async () => "");
 		if (!r.ok) throw new Error(r.error);
 		const d = evaluate(s, r.config, ["lint"], {
+			now: Date.now(),
 			defaultBranch: "main",
 			codeowners: [],
 			bugIssues: [],

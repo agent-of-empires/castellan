@@ -40,7 +40,11 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	...over,
 });
 
+const NOW = Date.parse("2026-01-01T12:00:00Z");
+const ago = (minutes: number) => NOW - minutes * 60_000;
+
 const ctx = (over: Partial<Context> = {}): Context => ({
+	now: NOW,
 	defaultBranch: "main",
 	codeowners: [],
 	bugIssues: [7],
@@ -94,6 +98,165 @@ describe("skip rules", () => {
 		const c = await load("mode: off");
 		expect(rulesOf(run(snap(), c))).toEqual(["mode_off"]);
 		expect(run(snap(), await load("mode: enforce")).outcome).toBe("candidate");
+	});
+});
+
+describe("stale checks", () => {
+	const running = (minutes: number, name = "docs") => ({
+		name,
+		conclusion: "in_progress",
+		startedAt: ago(minutes),
+	});
+
+	it("a non-required run in progress for 59 minutes still waits", () => {
+		const d = run(snap({ checks: [...snap().checks, running(59)] }));
+		expect(d.outcome).toBe("wait");
+	});
+
+	it("a non-required run in progress for 61 minutes neither waits nor escalates", () => {
+		const d = run(snap({ checks: [...snap().checks, running(61)] }));
+		expect(d).toEqual({ outcome: "candidate", reasons: [] });
+	});
+
+	it("a run with no start time is never stale", () => {
+		const d = run(
+			snap({
+				checks: [
+					...snap().checks,
+					{ name: "docs", conclusion: "queued", startedAt: null },
+				],
+			}),
+		);
+		expect(d.outcome).toBe("wait");
+	});
+
+	it("the limit comes from limits.staleCheckMinutes", async () => {
+		const c = await load("limits: { staleCheckMinutes: 10 }");
+		const s = snap({ checks: [...snap().checks, running(11)] });
+		expect(run(s, c).outcome).toBe("candidate");
+	});
+
+	it("a required run stale for 61 minutes escalates and names the check", () => {
+		const d = run(
+			snap({
+				checks: [
+					running(61, "ci"),
+					{ name: "docs", conclusion: "queued", startedAt: ago(1) },
+				],
+			}),
+		);
+		expect(d.outcome).toBe("escalate");
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+		expect(d.reasons[0]?.text).toBe(
+			"required check ci is stale (in_progress for more than 60 min)",
+		);
+	});
+});
+
+describe("same-name runs on one sha", () => {
+	const older = (conclusion: string, minutes?: number) => ({
+		id: 1,
+		name: "ci",
+		conclusion,
+		startedAt: minutes === undefined ? null : ago(minutes),
+	});
+	const newer = (conclusion: string, minutes?: number) => ({
+		id: 2,
+		name: "ci",
+		conclusion,
+		startedAt: minutes === undefined ? null : ago(minutes),
+	});
+
+	it("a fresh pending run waits even when a newer run passed", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 2), newer("success")] }),
+		);
+		expect(d.outcome).toBe("wait");
+		expect(rulesOf(d)).toEqual(["ci_unsettled"]);
+	});
+
+	it("a stale required run is skipped and the newer pass decides", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("success")] }),
+		);
+		expect(d).toEqual({ outcome: "candidate", reasons: [] });
+	});
+
+	it("a stale required run is skipped whatever the list order", () => {
+		const d = run(
+			snap({ checks: [newer("success"), older("in_progress", 61)] }),
+		);
+		expect(d.outcome).toBe("candidate");
+	});
+
+	it("a stale required run with a newer fresh pending run waits", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("in_progress", 2)] }),
+		);
+		expect(rulesOf(d)).toEqual(["ci_unsettled"]);
+	});
+
+	it("a stale required run with a newer failed run escalates via the failed required check", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 61), newer("failure")] }),
+		);
+		expect(d.outcome).toBe("escalate");
+		expect(rulesOf(d)).toEqual(["required_check"]);
+	});
+
+	it("a stale required run with a newer stale run escalates as stale", () => {
+		const d = run(
+			snap({ checks: [older("in_progress", 90), newer("in_progress", 61)] }),
+		);
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+		expect(d.reasons).toHaveLength(1);
+	});
+
+	it("a newer run of another name does not excuse a stale required run", () => {
+		const d = run(
+			snap({
+				checks: [
+					older("in_progress", 61),
+					{ id: 2, name: "docs", conclusion: "success" },
+				],
+			}),
+		);
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+	});
+
+	it("a stale required run with no id is not excused, newer is unproven", () => {
+		const d = run(
+			snap({
+				checks: [
+					{ name: "ci", conclusion: "in_progress", startedAt: ago(61) },
+					newer("success"),
+				],
+			}),
+		);
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
+	});
+
+	it("a stale non-required run with a newer pass does not block", () => {
+		const d = run(
+			snap({
+				checks: [
+					{ id: 1, name: "ci", conclusion: "success" },
+					{
+						id: 2,
+						name: "docs",
+						conclusion: "in_progress",
+						startedAt: ago(61),
+					},
+					{ id: 3, name: "docs", conclusion: "success" },
+				],
+			}),
+		);
+		expect(d).toEqual({ outcome: "candidate", reasons: [] });
+	});
+
+	it("an older failed run still escalates next to a newer pass", () => {
+		const d = run(snap({ checks: [older("failure"), newer("success")] }));
+		expect(rulesOf(d)).toContain("check_failing");
 	});
 });
 
@@ -410,7 +573,7 @@ describe("order", () => {
 		codeRabbit: "CHANGES_REQUESTED",
 		checks: [
 			{ name: "ci", conclusion: "failure" },
-			{ name: "lint", conclusion: "pending" },
+			{ name: "lint", conclusion: "in_progress", startedAt: ago(61) },
 		],
 		files: [
 			".castellan.yml",
@@ -445,6 +608,15 @@ describe("order", () => {
 			["skip_branch", { headRef: "fix/x" }],
 			["mode_off", {}, on],
 			["merge_conflict", { mergeable: true }],
+			[
+				"required_check_stale",
+				{
+					checks: [
+						{ name: "ci", conclusion: "failure" },
+						{ name: "lint", conclusion: "pending", startedAt: null },
+					],
+				},
+			],
 			[
 				"ci_unsettled",
 				{

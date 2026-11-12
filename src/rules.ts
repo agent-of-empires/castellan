@@ -20,6 +20,8 @@ export interface CodeownersRule {
 
 /** Facts the caller resolves from GitHub so that `evaluate` stays pure. */
 export interface Context {
+	/** Epoch ms; the clock for stale check runs. */
+	now: number;
 	defaultBranch: string;
 	codeowners: CodeownersRule[];
 	/** Linked issue numbers that carry the configured bug label. */
@@ -34,10 +36,19 @@ type Rule = (s: Snapshot, c: Config, required: string[], x: Context) => Hit[];
 const SKIPPED_AUTHORS = ["dependabot[bot]"];
 const PASSING = ["success", "neutral"];
 const PENDING = ["pending", "queued", "in_progress"];
+const MINUTE = 60_000;
 const OK = [...PASSING, "skipped"];
 const GENERATED =
 	/(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock)$|\.generated\.|(^|\/)(dist|generated)\//;
 const CODEOWNERS_FILE = /^(\.github\/|docs\/)?CODEOWNERS$/;
+
+type Check = Snapshot["checks"][number];
+
+/** Pending past the limit. A run with no `started_at` never counts: the API has no creation time. */
+const isStale = (k: Check, now: number, limitMinutes: number) =>
+	PENDING.includes(k.conclusion) &&
+	k.startedAt != null &&
+	now - k.startedAt > limitMinutes * MINUTE;
 
 const when = (cond: boolean, text: string): Hit[] => (cond ? [{ text }] : []);
 const paths = (files: string[], text: string): Hit[] =>
@@ -156,14 +167,36 @@ const CONFLICT: Record<string, Rule> = {
 	merge_conflict: (s) => when(s.mergeable === false, "PR has merge conflicts"),
 };
 
-/** CI is unsettled: a required check has no run yet, or a run is still going. */
+/** Before `wait`, so a stuck required check escalates instead of waiting forever. A newer same-name run decides instead. */
+const STALE_REQUIRED: Record<string, Rule> = {
+	required_check_stale: (s, c, required, x) =>
+		s.checks
+			.filter(
+				(k) =>
+					required.includes(k.name) &&
+					isStale(k, x.now, c.limits.staleCheckMinutes) &&
+					!s.checks.some(
+						(o) =>
+							o.name === k.name && k.id != null && o.id != null && o.id > k.id,
+					),
+			)
+			.map((k) => ({
+				text: `required check ${k.name} is stale (${k.conclusion} for more than ${c.limits.staleCheckMinutes} min)`,
+			})),
+};
+
+/** CI is unsettled: a required check has no run yet, or a run is still going. Stale runs do not count. */
 const WAIT: Record<string, Rule> = {
-	ci_unsettled: (s, _c, required) => [
+	ci_unsettled: (s, c, required, x) => [
 		...required
 			.filter((name) => !s.checks.some((k) => k.name === name))
 			.map((name) => ({ text: `required check ${name} has not started` })),
 		...s.checks
-			.filter((k) => PENDING.includes(k.conclusion))
+			.filter(
+				(k) =>
+					PENDING.includes(k.conclusion) &&
+					!isStale(k, x.now, c.limits.staleCheckMinutes),
+			)
 			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	],
 };
@@ -183,9 +216,13 @@ const ESCALATE: Record<string, Rule> = {
 			.map((name) => ({
 				text: `required check ${name} did not pass`,
 			})),
-	check_failing: (s) =>
+	check_failing: (s, c, _r, x) =>
 		s.checks
-			.filter((k) => !OK.includes(k.conclusion))
+			.filter(
+				(k) =>
+					!OK.includes(k.conclusion) &&
+					!isStale(k, x.now, c.limits.staleCheckMinutes),
+			)
 			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	coderabbit: (s) =>
 		when(s.codeRabbit === "CHANGES_REQUESTED", "CodeRabbit requested changes"),
@@ -256,6 +293,7 @@ export const touchesProtected = (s: Snapshot, c: Config, x: Context) =>
 const STAGES = [
 	["skip", SKIP],
 	["escalate", CONFLICT],
+	["escalate", STALE_REQUIRED],
 	["wait", WAIT],
 	["escalate", ESCALATE],
 ] as const;

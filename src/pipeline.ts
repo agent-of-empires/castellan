@@ -18,7 +18,7 @@ import { type CodeownersRule, type Context, evaluate } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
 	findStickyComment,
-	STATUS_CONTEXT,
+	postStatus,
 	statusFor,
 	waitingStatus,
 } from "./status.js";
@@ -196,6 +196,7 @@ export async function evaluatePull(
 			}
 		}
 		const ctx: Context = {
+			now: Date.now(),
 			defaultBranch,
 			codeowners,
 			bugIssues,
@@ -217,13 +218,12 @@ export async function evaluatePull(
 
 		if (decision.outcome === "wait") {
 			if (!opts.dryRun) {
-				await transport.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
-					owner,
-					repo,
-					sha: snapshot.headSha,
-					context: STATUS_CONTEXT,
-					...waitingStatus(config.mode),
-				});
+				await postStatus(
+					transport,
+					repoRef,
+					snapshot.headSha,
+					waitingStatus(config.mode),
+				);
 			}
 			return { status: "waiting" };
 		}
@@ -291,16 +291,10 @@ export async function evaluatePull(
 	try {
 		return await run();
 	} catch (err) {
-		await transport
-			.request("POST /repos/{owner}/{repo}/statuses/{sha}", {
-				owner,
-				repo,
-				sha: pr.head.sha,
-				context: STATUS_CONTEXT,
-				...statusFor("escalate", config.mode),
-				description: `${config.mode === "shadow" ? "shadow" : "castellan"}: internal error`,
-			})
-			.catch((e) => console.error("fail-closed status failed", e));
+		await postStatus(transport, repoRef, pr.head.sha, {
+			...statusFor("escalate", config.mode),
+			description: `${config.mode === "shadow" ? "shadow" : "castellan"}: internal error`,
+		}).catch((e) => console.error("fail-closed status failed", e));
 		throw err;
 	}
 }
