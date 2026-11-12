@@ -728,6 +728,7 @@ describe("triage", () => {
 				c.body.includes("<!-- castellan triage "),
 		);
 		expect(mine).toHaveLength(1);
+		expect(mine[0]?.id).toBe(1);
 		expect(routes(w.request).filter((r) => r === COMMENT)).toHaveLength(2);
 	});
 
