@@ -89,11 +89,18 @@ const rank = (conclusion: string) =>
 
 function checksSection({ checks }: Brief): string[] {
 	if (!checks.length) return ["Checks: none on the head commit."];
+	// The newest run (highest id) of a check replaces older ones.
+	const byName = new Map<string, Snapshot["checks"][number]>();
+	for (const c of checks) {
+		const prev = byName.get(c.name);
+		if (!prev || (c.id ?? 0) >= (prev.id ?? 0)) byName.set(c.name, c);
+	}
+	const latest = [...byName.values()];
 	const count = (r: number) =>
-		checks.filter((c) => rank(c.conclusion) === r).length;
+		latest.filter((c) => rank(c.conclusion) === r).length;
 	const pending = count(1);
 	const summary = `Checks (${count(3)} passed, ${count(2)} skipped, ${count(0)} failed${pending ? `, ${pending} pending` : ""})`;
-	const rows = checks
+	const rows = latest
 		.map((c, i) => ({ c, i }))
 		.sort((x, y) => rank(x.c.conclusion) - rank(y.c.conclusion) || x.i - y.i)
 		.map(({ c }) => c);

@@ -141,10 +141,11 @@ describe("renderComment", () => {
 		expect(out).toContain("| e2e \\| slow | skipped |");
 	});
 
-	it("collapses the checks, failed and skipped first, every completed run", () => {
+	it("collapses the checks, failed and skipped first, newest run per name", () => {
 		const out = renderComment({
 			...brief,
 			checks: [
+				// The API lists newest first, so ids, not order, decide.
 				{ id: 6, name: "lint", conclusion: "success" },
 				{ id: 5, name: "build", conclusion: "success" },
 				{ id: 4, name: "e2e", conclusion: "skipped" },
@@ -154,14 +155,13 @@ describe("renderComment", () => {
 			],
 		});
 		expect(out).toContain(
-			"<details><summary>Checks (2 passed, 1 skipped, 2 failed, 1 pending)</summary>",
+			"<details><summary>Checks (2 passed, 1 skipped, 1 failed, 1 pending)</summary>",
 		);
 		const rows = out
 			.split("\n")
 			.filter((l) => l.startsWith("| "))
 			.slice(2);
 		expect(rows).toEqual([
-			"| build | failure |",
 			"| test | failure |",
 			"| docs | pending |",
 			"| e2e | skipped |",
@@ -330,7 +330,7 @@ describe("real briefs", () => {
 		expect(out).toContain("- Model run: cached from `abcdef1`");
 	});
 
-	it("missing required check, an older completed run still shows next to the newer one", () => {
+	it("missing required check, the newest run replaces an older one", () => {
 		const out = renderComment({
 			outcome: {
 				verdict: "escalate",
@@ -352,8 +352,8 @@ describe("real briefs", () => {
 			source: "skipped",
 			shadow: true,
 		});
-		expect(out).toContain("Checks (6 passed, 2 skipped, 1 failed)");
-		expect(out.match(/\| Cargo Test \(macos\)/g)).toHaveLength(2);
+		expect(out).toContain("Checks (6 passed, 2 skipped, 0 failed)");
+		expect(out.match(/\| Cargo Test \(macos\)/g)).toHaveLength(1);
 		expect(out).toContain("Model: not run (rules decided)");
 	});
 });
