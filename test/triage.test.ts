@@ -83,6 +83,8 @@ function world(
 		failSet?: boolean;
 		comments?: { body: string; login: string }[];
 		failComments?: boolean;
+		/** Awaited by every comment listing, to hold concurrent runs together. */
+		onList?: () => Promise<void>;
 	} = {},
 ) {
 	const log: string[] = [];
@@ -131,18 +133,38 @@ function world(
 		}
 		return state;
 	});
-	const request = vi.fn(async (route: string, _p?: unknown) => {
+	const store = (opts.comments ?? []).map(({ body, login }, i) => ({
+		id: i + 1,
+		body,
+		user: { login },
+	}));
+	let nextId = store.length + 1;
+	const request = vi.fn(async (route: string, p?: unknown) => {
 		log.push(route);
+		const q = p as { body?: string; comment_id?: number };
+		if (route === COMMENT) {
+			store.push({
+				id: nextId++,
+				body: q.body ?? "",
+				user: { login: "castellan[bot]" },
+			});
+		} else if (route.startsWith("PATCH ")) {
+			const m = store.find((c) => c.id === q.comment_id);
+			if (m) m.body = q.body ?? "";
+		} else if (
+			route.startsWith("DELETE /repos/{owner}/{repo}/issues/comments")
+		) {
+			const i = store.findIndex((c) => c.id === q.comment_id);
+			if (i < 0) throw Object.assign(new Error("nf"), { status: 404 });
+			store.splice(i, 1);
+		}
 		return { data: {} };
 	});
 	const paginate = vi.fn(async (route: string) => {
 		if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}/comments") {
 			if (opts.failComments) throw new Error("comments unavailable");
-			return (opts.comments ?? []).map(({ body, login }, i) => ({
-				id: i + 1,
-				body,
-				user: { login },
-			}));
+			await opts.onList?.();
+			return store.map((c) => ({ ...c }));
 		}
 		return [];
 	});
@@ -151,6 +173,7 @@ function world(
 		paginate,
 		request,
 		log,
+		store,
 		transport: { graphql, paginate, request } as unknown as GithubTransport,
 	};
 }
@@ -165,7 +188,7 @@ const routes = (r: ReturnType<typeof world>["request"]) =>
 
 const commentBody = (r: ReturnType<typeof world>["request"]) =>
 	r.mock.calls
-		.filter(([route]) => route === COMMENT)
+		.filter(([route]) => route === COMMENT || route.startsWith("PATCH "))
 		.map(([, p]) => (p as { body: string }).body)
 		.join("\n");
 
@@ -656,14 +679,56 @@ describe("triage", () => {
 		expect(routes(second.request)).toContain(COMMENT);
 	});
 
-	it("posts again when the proposal changed", async () => {
+	it("edits the existing comment when the outcome changed, count stays one", async () => {
 		const first = world();
 		await run(first, "", { ...answer, priority: "P3" });
 		const second = world({
 			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
 		});
 		await run(second, "");
-		expect(routes(second.request)).toContain(COMMENT);
+		expect(routes(second.request)).not.toContain(COMMENT);
+		expect(routes(second.request)).toContain(
+			"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
+		);
+		expect(second.store).toHaveLength(1);
+		expect(second.store[0]?.body).toContain("<!-- castellan triage ");
+		expect(second.store[0]?.body).not.toBe(first.store[0]?.body);
+	});
+
+	it("an identical outcome writes no comment", async () => {
+		const first = world();
+		await run(first, "");
+		const second = world({
+			comments: [{ body: commentBody(first.request), login: "castellan[bot]" }],
+		});
+		await run(second, "");
+		expect(
+			routes(second.request).filter((r) => r.includes("/comments")),
+		).toEqual([]);
+	});
+
+	it("two concurrent runs leave exactly one triage comment", async () => {
+		let listed = 0;
+		let release: () => void = () => {};
+		const both = new Promise<void>((r) => {
+			release = r;
+		});
+		// Hold the first listing of each run until both runs have issued it.
+		const gate = async () => {
+			if (listed++ < 2) {
+				if (listed === 2) release();
+				await both;
+			}
+		};
+		const w = world({ onList: gate });
+		await Promise.all([run(w, ""), run(w, "")]);
+		const mine = w.store.filter(
+			(c) =>
+				c.user.login === "castellan[bot]" &&
+				c.body.includes("<!-- castellan triage "),
+		);
+		expect(mine).toHaveLength(1);
+		expect(routes(w.request).filter((r) => r === COMMENT)).toHaveLength(2);
 	});
 
 	it("makes no writes when comment lookup fails", async () => {
