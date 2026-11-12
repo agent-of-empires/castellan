@@ -32,7 +32,7 @@ export interface Snapshot {
 	filesTruncated: boolean;
 	diff: string;
 	diffTruncated: boolean;
-	/** The latest run of each check on the head SHA, not only required ones. */
+	/** Check runs on the head SHA, not only required ones; an older pending run is dropped once a newer one exists. */
 	checks: {
 		id?: number;
 		name: string;
