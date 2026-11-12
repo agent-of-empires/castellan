@@ -175,7 +175,10 @@ const STALE_REQUIRED: Record<string, Rule> = {
 				(k) =>
 					required.includes(k.name) &&
 					isStale(k, x.now, c.limits.staleCheckMinutes) &&
-					!s.checks.some((o) => o.name === k.name && (o.id ?? 0) > (k.id ?? 0)),
+					!s.checks.some(
+						(o) =>
+							o.name === k.name && k.id != null && o.id != null && o.id > k.id,
+					),
 			)
 			.map((k) => ({
 				text: `required check ${k.name} is stale (${k.conclusion} for more than ${c.limits.staleCheckMinutes} min)`,

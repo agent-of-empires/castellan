@@ -224,7 +224,7 @@ describe("same-name runs on one sha", () => {
 		expect(rulesOf(d)).toEqual(["required_check_stale"]);
 	});
 
-	it("a run with no id counts as 0 and is excused by any newer run", () => {
+	it("a stale required run with no id is not excused, newer is unproven", () => {
 		const d = run(
 			snap({
 				checks: [
@@ -233,7 +233,7 @@ describe("same-name runs on one sha", () => {
 				],
 			}),
 		);
-		expect(d.outcome).toBe("candidate");
+		expect(rulesOf(d)).toEqual(["required_check_stale"]);
 	});
 
 	it("a stale non-required run with a newer pass does not block", () => {
