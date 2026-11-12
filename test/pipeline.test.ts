@@ -15,7 +15,11 @@ interface World {
 	draft?: boolean;
 	state?: string;
 	issue?: object;
-	checks?: { name: string; conclusion: string | null }[];
+	checks?: {
+		name: string;
+		conclusion: string | null;
+		started_at?: string;
+	}[];
 	required?: string[];
 	mergeable?: boolean | null;
 }
@@ -417,6 +421,47 @@ describe("waiting for CI", () => {
 	});
 });
 
+describe("stale required check", () => {
+	const STARTED = "2026-01-01T00:00:00Z";
+	const at = (minutes: number) => Date.parse(STARTED) + minutes * 60_000;
+	const stale = () =>
+		world({
+			yaml: "mode: shadow",
+			checks: [{ name: "test", conclusion: "in_progress", started_at: STARTED }],
+			required: ["test"],
+		});
+
+	it("posts one status across sweeps while the check stays stale", async () => {
+		vi.useFakeTimers();
+		try {
+			const w = stale();
+			vi.setSystemTime(at(61));
+			await evaluatePull(w.env, repo, 3);
+			vi.setSystemTime(at(91));
+			await evaluatePull(w.env, repo, 3);
+			expect(w.routes().filter((r) => r === STATUS)).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("waits at exactly the limit and escalates one millisecond later", async () => {
+		vi.useFakeTimers();
+		try {
+			const w = stale();
+			vi.setSystemTime(at(60));
+			expect(await evaluatePull(w.env, repo, 3)).toEqual({ status: "waiting" });
+			vi.setSystemTime(at(60) + 1);
+			const r = await evaluatePull(w.env, repo, 3);
+			expect(r.brief?.outcome.reasons.map((x) => x.rule)).toEqual([
+				"required_check_stale",
+			]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
 describe("fail closed", () => {
 	it("sets a pending status and rethrows when a step after the snapshot throws", async () => {
 		const w = world();
@@ -436,6 +481,18 @@ describe("fail closed", () => {
 			}),
 		);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("posts the internal error status once when the same PR fails twice", async () => {
+		const w = world();
+		const base = w.paginate.getMockImplementation();
+		w.paginate.mockImplementation(async (route: string) => {
+			if (route.includes("/rules/branches/")) throw new Error("boom");
+			return (base ? base(route) : []) as unknown[];
+		});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("boom");
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toThrow("boom");
+		expect(w.routes().filter((r) => r === STATUS)).toHaveLength(1);
 	});
 
 	it("sets a pending status and rethrows when the team lookup throws", async () => {

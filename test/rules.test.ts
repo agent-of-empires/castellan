@@ -148,7 +148,7 @@ describe("stale checks", () => {
 		expect(d.outcome).toBe("escalate");
 		expect(rulesOf(d)).toEqual(["required_check_stale"]);
 		expect(d.reasons[0]?.text).toBe(
-			"required check ci is stale (in_progress for 61 min)",
+			"required check ci is stale (in_progress for more than 60 min)",
 		);
 	});
 });

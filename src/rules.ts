@@ -177,7 +177,7 @@ const STALE_REQUIRED: Record<string, Rule> = {
 					isStale(k, x.now, c.limits.staleCheckMinutes),
 			)
 			.map((k) => ({
-				text: `required check ${k.name} is stale (${k.conclusion} for ${Math.floor((x.now - (k.startedAt ?? 0)) / MINUTE)} min)`,
+				text: `required check ${k.name} is stale (${k.conclusion} for more than ${c.limits.staleCheckMinutes} min)`,
 			})),
 };
 
