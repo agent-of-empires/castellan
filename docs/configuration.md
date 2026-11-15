@@ -57,7 +57,7 @@ skip_branches!: # replaces, does not append
 `off | shadow | enforce`. Default `shadow`.
 
 - `off`: nothing is evaluated, posted or written. PRs and triage are skipped.
-- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Nothing is approved, merged, labeled or written to a project.
+- `shadow`: posts the brief and the `castellan` commit status, which is `success` for a verdict ("shadow: would merge" or "shadow: would escalate (<first reason>)") and `pending` ("shadow: waiting for CI") while CI is unsettled. The model also runs on every PR that is not skipped, including rule escalations, where its review is advice and the rules decide. Findings anchored to a diff line are also posted as one `COMMENT` review (see below). Nothing is approved, merged, labeled or written to a project.
 - `enforce`: the model runs only for rule candidates. Additionally approves the head SHA and enables squash auto-merge for a `merge` verdict.
 
 These describe the PR gate. Triage has no shadow mode: it is independent of `shadow` and `enforce`, governed by [`triage.enabled`](#triage), and only `off` here disables it.
@@ -299,7 +299,7 @@ The `castellan` commit status is posted only when its state, description or targ
 
 Required checks come from the rulesets API only; classic branch protection is not read. Checks are every check run on the head SHA, not only the required ones. Commit statuses (not check runs) are not evaluated.
 
-**Model.** Only a PR that passed every rule is reviewed. The model returns `intent_match`, `new_behavior` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block.
+**Model.** Only a PR that passed every rule is reviewed. The model returns `intent_match`, `new_behavior` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block. A finding that also names a `path` and a `line` the diff shows is posted as an inline review comment on that line instead, at most 10 per review, with a `nit` prefixed `nit:`; the brief then only counts those. A finding without both stays in the brief, and if the review cannot be posted at all its findings stay in the brief too.
 
 ### Author classes
 
@@ -318,7 +318,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 - Verdicts are `merge` and `escalate`. `send_back` is reserved and never emitted.
 - One sticky comment per PR, found by the hidden marker `<!-- castellan` and by being authored by the App (or the token's bot login). It is edited in place, never duplicated. The verdict is the first line, the machine readable state block is always last, and the body stays under 65,000 characters (findings are dropped first).
-- Brief layout: verdict line (with `(shadow)` in shadow), up to 3 reasons, Model review (or one line "Model: not run (rules decided)"), a collapsed Checks table and a collapsed Provenance list. The table is deduped by check name keeping the newest run (highest check run id), with failed, pending and skipped rows first. At most 3 reasons, 500 characters per reason, 50 rows in the check table. Provenance says whether the model was not run, `fresh` or cached from a sha.
+- Brief layout: verdict line (with `(shadow)` in shadow), up to 3 reasons, Model review (or one line "Model: not run (rules decided)") with a line counting the inline findings, a collapsed Checks table and a collapsed Provenance list. The table is deduped by check name keeping the newest run (highest check run id), with failed, pending and skipped rows first. At most 3 reasons, 500 characters per reason, 50 rows in the check table. Provenance says whether the model was not run, `fresh` or cached from a sha.
 - Reasons that quote model or PR text are made inert: no `@` mentions, links, URLs, HTML or dashes.
 - Commit status context is `castellan`. In `enforce`, `merge` sets `success` ("castellan: merge") and `escalate` sets `pending` ("castellan: escalated to a human"). In `shadow` it is `success` for both verdicts, because `pending` reads as "waiting for status to be reported", and `pending` ("shadow: waiting for CI") only while CI is unsettled. It is never set to `failure`, so an escalation waits for a human instead of blocking.
 - On an unexpected error after the head SHA is known, the status is set to `pending` ("castellan: internal error"; `success` "shadow: internal error" in `shadow`) so a stale verdict cannot stay.
@@ -329,8 +329,9 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - A `merge` that touches the config file, CODEOWNERS, `.github/`, `paths.protected`, `paths.release` or a `teams.protected` file is downgraded to `escalate` right before acting (rule `protected_guard`), even if the rules above let it through.
 - The head SHA must not have moved. The approval, the auto-merge request and the immediate merge are all pinned to the evaluated SHA.
 - Merge method is always squash.
-- Approves as the App unless it already approved the same head. If auto-merge cannot be enabled because the PR is already mergeable ("clean status"), it merges immediately.
-- If approving or queuing fails, the status goes to `pending` and the comment says why (`auto_merge_failed`).
+- The review is the same one that carries the inline findings: `APPROVE` only in `enforce` with a `merge` verdict, `COMMENT` in shadow and for an escalation, never `REQUEST_CHANGES`, so an escalation waits for a human instead of blocking the PR.
+- Approves as the App only after the guards above. One review per head: an existing review by the App at this head is edited in place (`PUT .../reviews/{id}`), so a re-run does not stack reviews. A `COMMENT` review cannot become an approval, so `enforce` still posts a new approving review after a shadow run happened to leave one at the same head.
+- If the approving review or the queueing fails, the status goes to `pending` and the comment says why (`review_failed`, `auto_merge_failed`). If auto-merge cannot be enabled because the PR is already mergeable ("clean status"), it merges immediately.
 - Re-running sequentially on the same head neither approves twice nor re-queues. There is no lock: two concurrent deliveries on the same head can both approve.
 
 ### Snapshot and model limits

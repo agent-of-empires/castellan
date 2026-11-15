@@ -27,6 +27,7 @@ interface World {
 	mergeable?: boolean | null;
 	/** A comment body to start from, as a head that already holds a block would. */
 	stickyBody?: string;
+	diff?: string;
 }
 
 function world({
@@ -38,6 +39,7 @@ function world({
 	required = [],
 	mergeable = true,
 	stickyBody,
+	diff = "diff --git a/src/a.ts b/src/a.ts",
 }: World = {}) {
 	const posted = new Map<string, unknown>();
 	let sticky: string | null = stickyBody ?? null;
@@ -62,8 +64,7 @@ function world({
 				return { data: yaml };
 			}
 			if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") {
-				if (params.mediaType)
-					return { data: "diff --git a/src/a.ts b/src/a.ts" };
+				if (params.mediaType) return { data: diff };
 				return {
 					data: {
 						title: "feat: x",
@@ -309,6 +310,47 @@ describe("evaluatePull", () => {
 		w.create.mockRejectedValue(new Error("down"));
 		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("posts a model finding that lands on a diff line as an inline review comment", async () => {
+		const w = world({
+			diff: [
+				"diff --git a/src/a.ts b/src/a.ts",
+				"--- a/src/a.ts",
+				"+++ b/src/a.ts",
+				"@@ -1,2 +1,3 @@",
+				" context",
+				"+added",
+			].join("\n"),
+		});
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: true,
+						new_behavior: false,
+						reasons: [
+							{
+								severity: "concern",
+								text: "no test covers this",
+								path: "src/a.ts",
+								line: 2,
+							},
+						],
+					}),
+				},
+			],
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.inline).toEqual([{ index: 0, path: "src/a.ts", line: 2 }]);
+		expect(w.request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({
+				comments: [{ path: "src/a.ts", line: 2, body: "no test covers this" }],
+			}),
+		);
 	});
 
 	it("gives the model the unresolved review threads and counts them in the brief", async () => {

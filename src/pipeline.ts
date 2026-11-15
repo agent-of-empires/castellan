@@ -8,12 +8,14 @@ import {
 } from "./central.js";
 import type { Brief } from "./comment.js";
 import { type Config, githubReader, loadConfig } from "./config.js";
+import { rightLines } from "./diff.js";
 import {
 	createGithubClient,
 	type GithubTransport,
 	type Repo,
 } from "./github.js";
 import { type LlmDeps, promptHash, review } from "./llm.js";
+import { planInline } from "./review.js";
 import { type CodeownersRule, type Context, evaluate } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
@@ -330,6 +332,10 @@ export async function evaluatePull(
 		const result = dedup.source === "skipped" ? undefined : dedup.result;
 		const outcome = decide(decision, result);
 		if (!outcome) return { status: "skipped" };
+		// Only a model finding can be anchored: a rule reason has no line in the diff.
+		const inline = result?.ok
+			? planInline(result.verdict.reasons, rightLines(snapshot.diff))
+			: [];
 		const brief: Brief = {
 			outcome,
 			key,
@@ -339,6 +345,7 @@ export async function evaluatePull(
 				? rendered.dropped + readDropped || undefined
 				: undefined,
 			threadsCapped: capped || undefined,
+			inline: inline.length ? inline : undefined,
 			review: result?.ok ? result : undefined,
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,

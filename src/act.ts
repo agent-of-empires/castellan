@@ -1,6 +1,7 @@
-import { type Brief, renderComment } from "./comment.js";
+import { type Brief, renderComment, renderReviewBody } from "./comment.js";
 import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
+import { inlineComments, type ReviewOutcome, submitReview } from "./review.js";
 import { type Context, touchesProtected } from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
@@ -24,7 +25,8 @@ export interface ActResult {
 		| "not_merge"
 		| "not_open"
 		| "stale_head"
-		| "queue_failed";
+		| "queue_failed"
+		| "review_failed";
 }
 
 const ENABLE_AUTO_MERGE = `mutation($id: ID!, $oid: GitObjectID!) {
@@ -37,9 +39,12 @@ const message = (err: unknown) =>
 	err instanceof Error ? err.message : String(err);
 
 /**
- * off: nothing. shadow: comment and status only. enforce: also approve and queue
- * a squash auto-merge, only for a `merge` verdict on a head that has not moved.
- * Safe to re-run sequentially on the same head; concurrent runs can both approve.
+ * off: nothing. shadow: one review with the anchored findings (`COMMENT`) plus the
+ * comment and status. enforce: also approves, and queues a squash auto-merge, only
+ * for a `merge` verdict on a head that has not moved. An escalation never posts
+ * `REQUEST_CHANGES`: it waits for a human instead of blocking. Findings that could
+ * not be anchored, and every finding when the review cannot be posted, stay in the
+ * brief. Safe to re-run sequentially on the same head; concurrent runs can both approve.
  */
 export async function act(
 	transport: GithubTransport,
@@ -85,10 +90,38 @@ export async function act(
 					"touches a protected path, protected team or governance file",
 				)
 			: brief;
-	await publish(final);
+	const isMerge = final.outcome.verdict === "merge";
+	const event = config.mode === "enforce" && isMerge ? "APPROVE" : "COMMENT";
+	const comments = inlineComments(
+		final.inline ?? [],
+		final.review?.verdict.reasons ?? [],
+	);
+	const post = async (): Promise<ReviewOutcome | null> => {
+		if (!comments.length && event !== "APPROVE") return null;
+		try {
+			return await submitReview(transport, repoRef, {
+				pullNumber,
+				headSha,
+				event,
+				body: renderReviewBody(final),
+				comments,
+				login: author.login,
+			});
+		} catch (err) {
+			console.error("review post failed", { error: message(err) });
+			return null;
+		}
+	};
+
+	// An approving review waits for the guards below; a comment review cannot approve anything.
+	let review: ReviewOutcome | null = event === "COMMENT" ? await post() : null;
+	// The brief is the record that must not be lost, so a failed review keeps its findings.
+	await publish(
+		review || !final.inline?.length ? final : { ...final, inline: undefined },
+	);
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
-	if (final.outcome.verdict !== "merge") {
+	if (!isMerge) {
 		return { approved: false, queued: false, skipped: "not_merge" };
 	}
 
@@ -103,30 +136,15 @@ export async function act(
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
 
-	const reviews = await transport.paginate(
-		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-		{ owner, repo, pull_number: pullNumber, per_page: 100 },
-	);
-	let approved = reviews.some(
-		(r) =>
-			r.user?.login === author.login &&
-			r.state === "APPROVED" &&
-			r.commit_id === headSha,
-	);
+	review = await post();
+	const approved = review?.approved ?? false;
+	if (!approved) {
+		await publish(
+			escalate("review_failed", "could not post the approving review"),
+		);
+		return { approved: false, queued: false, skipped: "review_failed" };
+	}
 	try {
-		if (!approved) {
-			await transport.request(
-				"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-				{
-					owner,
-					repo,
-					pull_number: pullNumber,
-					commit_id: headSha,
-					event: "APPROVE",
-				},
-			);
-			approved = true;
-		}
 		if (!pr.auto_merge) {
 			try {
 				await transport.graphql(ENABLE_AUTO_MERGE, {

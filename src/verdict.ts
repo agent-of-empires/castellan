@@ -49,7 +49,11 @@ export function decide(
 			: []),
 		...reasons
 			.filter((r) => r.severity === "blocker")
-			.map((r) => ({ ...model("llm_blocker", r.text), path: r.path })),
+			.map((r) => ({
+				...model("llm_blocker", r.text),
+				path: r.path,
+				line: r.line,
+			})),
 	];
 	return vetoes.length
 		? { verdict: "escalate", reasons: vetoes }
