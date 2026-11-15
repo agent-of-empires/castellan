@@ -50,6 +50,31 @@ const brief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 	source: "skipped",
 });
 
+/** A brief the model wrote, with one anchored finding. */
+const modelBrief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
+	...brief(verdict),
+	source: "llm",
+	inline: [{ index: 0, path: "src/a.ts", line: 2 }],
+	review: {
+		ok: true,
+		verdict: {
+			intent_match: true,
+			new_behavior: false,
+			reasons: [
+				{
+					severity: "concern",
+					text: "the port is not recorded",
+					path: "src/a.ts",
+					line: 2,
+				},
+			],
+		},
+		usage: { inputTokens: 1, outputTokens: 1 },
+		costUsd: 0,
+		promptHash: "p",
+	},
+});
+
 interface World {
 	head?: string;
 	state?: string;
@@ -96,14 +121,20 @@ function fake({
 	} as unknown as GithubTransport;
 	const routes = () => request.mock.calls.map((c) => c[0]);
 	const sent = (route: string) =>
-		request.mock.calls.filter((c) => c[0] === route).map((c) => c[1]);
+		request.mock.calls
+			.filter((c) => c[0] === route)
+			.map((c) => c[1] as { body?: string });
 	return { transport, request, paginate, graphql, routes, sent };
 }
 
 const run = async (
 	yaml: string,
 	w: World = {},
-	over: { files?: string[]; verdict?: "merge" | "escalate" } = {},
+	over: {
+		files?: string[];
+		verdict?: "merge" | "escalate";
+		brief?: Brief;
+	} = {},
 ) => {
 	const f = fake(w);
 	const result = await act(f.transport, repo, {
@@ -111,11 +142,71 @@ const run = async (
 		snapshot: snapshot(over.files),
 		config: await load(yaml),
 		ctx,
-		brief: brief(over.verdict),
+		brief: over.brief ?? brief(over.verdict),
 		author,
 	});
 	return { ...f, result };
 };
+
+describe("inline findings", () => {
+	it("posts a comment review with the anchored finding in shadow", async () => {
+		const { request, sent, result } = await run(
+			"mode: shadow",
+			{},
+			{
+				brief: modelBrief(),
+			},
+		);
+		expect(result).toEqual({ approved: false, queued: false });
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({
+				event: "COMMENT",
+				commit_id: "head1",
+				comments: [
+					{ path: "src/a.ts", line: 2, body: "the port is not recorded" },
+				],
+			}),
+		);
+		// The state block still holds the finding; the visible brief must not repeat it.
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("Inline findings: 1");
+		expect(body).not.toContain("the port is not recorded");
+	});
+
+	it("approves with the findings in enforce", async () => {
+		const { sent, result } = await run(
+			"mode: enforce",
+			{},
+			{
+				brief: modelBrief(),
+			},
+		);
+		expect(result).toEqual({ approved: true, queued: true });
+		expect(sent(APPROVE)[0]).toMatchObject({
+			event: "APPROVE",
+			commit_id: "head1",
+			body: expect.stringContaining("**Castellan: merge** at `head1`"),
+			comments: [expect.objectContaining({ path: "src/a.ts", line: 2 })],
+		});
+	});
+
+	it("keeps the findings in the brief when the review cannot be posted", async () => {
+		const { sent } = await run(
+			"mode: shadow",
+			{ reviewError: new Error("422") },
+			{ brief: modelBrief() },
+		);
+		const body = sent(COMMENT)[0]?.body ?? "";
+		expect(body).toContain("the port is not recorded");
+		expect(body).not.toContain("Inline findings");
+	});
+
+	it("posts no review when nothing could be anchored", async () => {
+		const { routes } = await run("mode: shadow");
+		expect(routes()).not.toContain(APPROVE);
+	});
+});
 
 describe("modes", () => {
 	it("off does nothing", async () => {
@@ -347,7 +438,7 @@ describe("queue failures", () => {
 		});
 	});
 
-	it("escalates without queuing when the review POST fails with 422", async () => {
+	it("escalates without queuing when the approving review fails with 422", async () => {
 		const { sent, graphql, result } = await run("mode: enforce", {
 			reviewError: new Error(
 				"Unprocessable Entity: Can not approve your own pull request",
@@ -360,7 +451,9 @@ describe("queue failures", () => {
 		expect(result).toEqual({
 			approved: false,
 			queued: false,
-			skipped: "queue_failed",
+			skipped: "review_failed",
 		});
+		const last = sent(COMMENT).at(-1)?.body ?? "";
+		expect(last).toContain("could not post the approving review");
 	});
 });

@@ -5,6 +5,8 @@ export interface Reason {
 	rule: string;
 	text: string;
 	path?: string;
+	/** New-file line the reason is about, when it is anchored to the diff. */
+	line?: number;
 }
 
 export interface Decision {
