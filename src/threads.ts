@@ -116,14 +116,26 @@ export async function readThreads(
 	return found.slice(0, MAX_THREADS);
 }
 
-/** Part of the verdict cache key: a new or resolved thread must re-run the model. */
+/** Part of the verdict cache key: everything `renderThreads` sends, so an edit re-runs the model. */
 export const threadsKey = (threads: ReviewThread[]) =>
-	hashOf(threads.map((t) => `${t.id}:${t.outdated}`)).slice(0, 16);
+	hashOf(
+		threads.map((t) =>
+			JSON.stringify([
+				t.id,
+				t.author,
+				t.bot,
+				t.path ?? null,
+				t.line ?? null,
+				t.outdated,
+				t.body,
+			]),
+		),
+	).slice(0, 16);
 
 /** The `reviewThreads` prompt field, or undefined when there is nothing to verify. */
 export function renderThreads(threads: ReviewThread[]): string | undefined {
 	if (!threads.length) return undefined;
-	const intro = `${threads.length} unresolved review thread(s), oldest first. Each is a prior finding: decide whether it still applies at this head, and add your own reason only where it does not cover the problem.`;
+	const intro = `${threads.length} unresolved review thread(s), oldest first. Each is a prior finding: report it as a reason when it still applies at this head, and add nothing from it when it does not.`;
 	const rows = threads.map((t, i) => {
 		const where = t.path ? ` at ${t.path}${t.line ? `:${t.line}` : ""}` : "";
 		const state = t.outdated ? ", outdated anchor" : "";

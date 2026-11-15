@@ -176,4 +176,13 @@ describe("threadsKey", () => {
 		expect(threadsKey([thread])).not.toBe(threadsKey([]));
 		expect(threadsKey([])).toBe(threadsKey([]));
 	});
+
+	it("changes when a comment is edited in place on the same head", () => {
+		expect(threadsKey([{ ...thread, body: "b, edited" }])).not.toBe(
+			threadsKey([thread]),
+		);
+		expect(threadsKey([{ ...thread, path: "src/a.ts" }])).not.toBe(
+			threadsKey([thread]),
+		);
+	});
 });
