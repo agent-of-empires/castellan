@@ -336,9 +336,9 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 ### Snapshot and model limits
 
 - PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates.
-- Labels, comments and review bodies are never fetched or shown to the model.
-- Review input: title, body, diff, and the body of the first linked issue (3,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 4,096 output tokens.
-- The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model)`. In `enforce` a rule escalated PR never reaches the model; in `shadow` it does, as advice.
+- Labels, issue comments and review bodies are never fetched. Of the PR's review threads, the first comment of each unresolved one is fetched (GraphQL `reviewThreads`, best effort: a failure reads as none), capped at 25 threads and 900 characters each, and castellan's own comments are dropped.
+- Review input: title, body, diff, the body of the first linked issue (3,000 characters) and the unresolved review threads (12,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 4,096 output tokens.
+- The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model, thread key)`. The thread key changes when a thread appears, is resolved or goes stale, so the model re-runs on an unchanged head. In `enforce` a rule escalated PR never reaches the model and its threads are not read at all; in `shadow` it does, as advice.
 
 ### Triage
 

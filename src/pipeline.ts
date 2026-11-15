@@ -22,6 +22,7 @@ import {
 	statusFor,
 	waitingStatus,
 } from "./status.js";
+import { readThreads, renderThreads, threadsKey } from "./threads.js";
 import { type TriageResult, triage } from "./triage.js";
 import { decide } from "./verdict.js";
 
@@ -228,6 +229,14 @@ export async function evaluatePull(
 			return { status: "waiting" };
 		}
 
+		// Shadow also runs the model on rule escalations, as advice only.
+		const skipModel =
+			decision.outcome === "escalate" && (config.mode !== "shadow" || !!error);
+		// Unresolved threads are what a reviewer answers first, so they are part of
+		// the model input and of the cache key: a new thread must re-run the model.
+		const threads = skipModel
+			? []
+			: await readThreads(transport, repoRef, pullNumber, login);
 		const sticky = await findStickyComment(transport, repoRef, pullNumber, {
 			login,
 		});
@@ -235,14 +244,12 @@ export async function evaluatePull(
 			headSha: snapshot.headSha,
 			promptHash: promptHash(config),
 			model: config.models.review,
+			threads: threadsKey(threads),
 		};
 		const dedup = await getOrRun({
 			cached: sticky ? parseBlock(sticky.body) : null,
 			key,
-			// Shadow also runs the model on rule escalations, as advice only.
-			skipModel:
-				decision.outcome === "escalate" &&
-				(config.mode !== "shadow" || !!error),
+			skipModel,
 			run: async () => {
 				const linked = snapshot.linkedIssues[0];
 				const issue = linked ? await getIssue(env, repoRef, linked) : null;
@@ -252,6 +259,7 @@ export async function evaluatePull(
 						body: snapshot.body,
 						diff: snapshot.diff,
 						linkedIssueBody: issue?.body ?? undefined,
+						threads: renderThreads(threads),
 					},
 					config,
 					env.llm,
@@ -271,6 +279,7 @@ export async function evaluatePull(
 			outcome,
 			key,
 			checks: snapshot.checks,
+			threads: threads.length || undefined,
 			review: result?.ok ? result : undefined,
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,

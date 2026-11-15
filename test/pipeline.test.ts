@@ -124,7 +124,14 @@ function world({
 		llm: { client: { messages: { create } } as unknown as MessagesClient },
 	};
 	const routes = () => request.mock.calls.map((c) => c[0]);
-	return { env, request, paginate, graphql, create, routes };
+	/** The user message of the model call at `call`. */
+	const sent = (call = 0) => {
+		const args = create.mock.calls as unknown as
+			| { messages?: { content?: string }[] }[][]
+			| undefined;
+		return args?.[call]?.[0]?.messages?.[0]?.content ?? "";
+	};
+	return { env, request, paginate, graphql, create, routes, sent };
 }
 
 describe("evaluatePull", () => {
@@ -156,7 +163,10 @@ describe("evaluatePull", () => {
 			APPROVE,
 			expect.objectContaining({ commit_id: "head1", event: "APPROVE" }),
 		);
-		expect(w.graphql).toHaveBeenCalledTimes(1);
+		expect(w.graphql).toHaveBeenCalledWith(
+			expect.stringContaining("enablePullRequestAutoMerge"),
+			expect.anything(),
+		);
 	});
 
 	it("reads config at the base branch ref, not the stale base sha", async () => {
@@ -285,6 +295,52 @@ describe("evaluatePull", () => {
 		w.create.mockRejectedValue(new Error("down"));
 		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("gives the model the unresolved review threads and counts them in the brief", async () => {
+		const w = world();
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: [
+							{
+								id: "T_1",
+								isResolved: false,
+								isOutdated: false,
+								comments: {
+									nodes: [
+										{
+											author: { login: "coderabbitai[bot]" },
+											path: "src/a.ts",
+											line: 12,
+											body: "the port is not recorded",
+										},
+									],
+								},
+							},
+						],
+					},
+				},
+			},
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.threads).toBe(1);
+		expect(w.sent()).toContain("reviewThreads");
+		expect(w.sent()).toContain("src/a.ts:12");
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Unresolved review threads checked: 1");
+	});
+
+	it("does not read threads when the model is not going to run", async () => {
+		const w = world({ yaml: "mode: enforce" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.graphql).not.toHaveBeenCalledWith(
+			expect.stringContaining("reviewThreads"),
+			expect.anything(),
+		);
 	});
 });
 
@@ -557,7 +613,10 @@ describe("dryRun", () => {
 		for (const r of [COMMENT, STATUS, APPROVE]) {
 			expect(w.routes()).not.toContain(r);
 		}
-		expect(w.graphql).not.toHaveBeenCalled();
+		expect(w.graphql).not.toHaveBeenCalledWith(
+			expect.stringContaining("enablePullRequestAutoMerge"),
+			expect.anything(),
+		);
 	});
 
 	it("does not set a failure status either", async () => {

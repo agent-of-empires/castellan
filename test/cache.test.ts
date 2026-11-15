@@ -132,6 +132,40 @@ describe("getOrRun", () => {
 		expect(fn).toHaveBeenCalledOnce();
 	});
 
+	it("runs fresh when a review thread appeared or was resolved", async () => {
+		const withThreads = { ...key, threads: "t1" };
+		const cached = parseBlock(serializeBlock({ ...block, threads: "t1" }));
+		if (!cached) throw new Error("block did not round-trip");
+		const hit = await getOrRun({
+			cached,
+			key: withThreads,
+			skipModel: false,
+			run: run(),
+		});
+		expect(hit.source).toBe("cache");
+		const fn = run();
+		const miss = await getOrRun({
+			cached,
+			key: { ...withThreads, threads: "t2" },
+			skipModel: false,
+			run: fn,
+		});
+		expect(miss.source).toBe("llm");
+		expect(fn).toHaveBeenCalledOnce();
+	});
+
+	it("runs fresh against a block written before threads were keyed", async () => {
+		const fn = run();
+		const r = await getOrRun({
+			cached: block,
+			key: { ...key, threads: "t1" },
+			skipModel: false,
+			run: fn,
+		});
+		expect(r.source).toBe("llm");
+		expect(fn).toHaveBeenCalledOnce();
+	});
+
 	it("runs when there is no cached block or no cached llm result", async () => {
 		const fn = run();
 		const none = { cached: null, key, skipModel: false, run: fn };

@@ -290,7 +290,11 @@ describe("cli", () => {
 		expect(code).toBe(0);
 		expect(out.join("\n")).toContain("Castellan brief");
 		expect(f.routes().filter((r) => !r.startsWith("GET "))).toEqual([]);
-		expect(f.graphql).not.toHaveBeenCalled();
+		// Threads are read even in a dry run; nothing may be written through GraphQL.
+		expect(f.graphql).not.toHaveBeenCalledWith(
+			expect.stringContaining("enablePullRequestAutoMerge"),
+			expect.anything(),
+		);
 	});
 });
 

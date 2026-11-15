@@ -68,6 +68,23 @@ describe("buildSystemPrompt", () => {
 		);
 		expect(p.startsWith("be strict\n\n1. a\n2. b\n\n")).toBe(true);
 	});
+
+	it("forbids findings that report a check passed", async () => {
+		const p = buildSystemPrompt(await cfg());
+		expect(p).toContain(
+			"Every reason must name a defect the author has to fix",
+		);
+		expect(p).toContain(
+			"Never report that you checked something and found it clean",
+		);
+		expect(p).toContain("A change with no defects has an empty reasons array");
+	});
+
+	it("tells the model what a review thread is", async () => {
+		const p = buildSystemPrompt(await cfg());
+		expect(p).toContain('"reviewThreads" lists the pull request\'s unresolved');
+		expect(p).toContain("do not restate it as your own reason");
+	});
 });
 
 describe("promptHash", () => {
@@ -110,6 +127,21 @@ describe("review", () => {
 			prices: { "us.anthropic.claude-sonnet-5-5": { input: 1, output: 1 } },
 		});
 		expect(r).toMatchObject({ ok: true, costUsd: 1200 / 1e6 });
+	});
+
+	it("sends the unresolved threads as their own untrusted field", async () => {
+		const { create, client } = fake(JSON.stringify(good));
+		await review(
+			{
+				...input,
+				threads: "1. bot coderabbitai[bot] at src/a.ts:12:\nport not recorded",
+			},
+			await cfg(),
+			{ client },
+		);
+		const body = sent(create);
+		expect(body).toMatch(/BEGIN reviewThreads [0-9a-f]{32}/);
+		expect(body).toContain("port not recorded");
 	});
 
 	it("accepts JSON wrapped in a code fence", async () => {

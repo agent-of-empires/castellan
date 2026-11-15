@@ -57,17 +57,17 @@ Castellan has no database, queue or file store. Everything it remembers is on th
 - The sticky comment, with a hidden JSON state block as its last item: verdict, head SHA, prompt hash, model and, when the model ran, its result and cost.
 - The `castellan` commit status.
 
-The block caches only the model result, keyed by `(head SHA, prompt hash, review model)`. Rules and the verdict are recomputed from live GitHub data on every event. A block is trusted only from the App's own comment, only if it is the last thing in the body, only once (a body with two markers is ignored), and only if it passes the strict schema. Someone who can edit the App's comment could forge a cached model result, but still not skip a rule.
+The block caches only the model result, keyed by `(head SHA, prompt hash, review model, thread key)`. The thread key digests the ids and anchors of the unresolved review threads the verdict answered, so a thread that appears, is resolved or goes stale re-runs the model even on an unchanged head. Rules and the verdict are recomputed from live GitHub data on every event. A block is trusted only from the App's own comment, only if it is the last thing in the body, only once (a body with two markers is ignored), and only if it passes the strict schema. Someone who can edit the App's comment could forge a cached model result, but still not skip a rule.
 
 The Lambda keeps the App secret and the App connection in memory per container, nothing else.
 
 ## Prompt injection boundaries
 
-The injectable text is the PR title, body, diff, linked issue body and, for triage, the issue title and body. The boundaries:
+The injectable text is the PR title, body, diff, linked issue body, the unresolved review threads, and, for triage, the issue title and body. The boundaries:
 
-- **No code execution.** No PR code is checked out or run. The diff is text, and labels, comments and review bodies are never fetched.
+- **No code execution.** No PR code is checked out or run. The diff and the threads are text. Labels, issue comments and review bodies are never fetched. Of the review threads, only the first comment of each unresolved thread is read, and castellan's own comments are dropped, so the model answers the review state instead of its own previous output.
 - **Random delimiters.** Every untrusted field is placed between `BEGIN <name> <boundary>` and `END <name> <boundary>` lines, where the boundary is 16 random bytes per call, and the system prompt tells the model to treat the content as data. The boundary cannot be guessed ahead of time.
-- **Caps.** Body 3,000, diff 30,000, linked issue 3,000 characters; truncation is stated to the model, and a truncated body or diff escalates before the model runs.
+- **Caps.** Body 3,000, diff 30,000, linked issue 3,000, review threads 12,000 characters in total, 25 threads at 900 characters each; truncation is stated to the model, and a truncated body or diff escalates before the model runs.
 - **The model cannot grant.** The structural mitigation: even a fully hijacked reply can only escalate or fail to veto. See above.
 - **Constrained outputs.** Strict schemas. Triage output must name a configured priority and an existing `area:*` label; it can only pick among values that already exist, never create labels, never set Fit, and `ready-for-agent` stays comment only.
 - **Inert output.** Model and PR text rendered into comments is stripped of `@` mentions, links, raw URLs, HTML and dashes (`escapeText`), and the state block escapes `<`, `>` and dashes so model text cannot close the comment or forge a marker.
