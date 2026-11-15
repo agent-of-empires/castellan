@@ -9,6 +9,7 @@ import {
 	type ReviewOutcome,
 	submitReview,
 } from "./review.js";
+import { escalationReviewers, requestReviewers } from "./reviewers.js";
 import { type Context, touchesProtected } from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
@@ -162,6 +163,14 @@ export async function act(
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
 	if (!isMerge) {
+		// An escalation has nobody watching it until a reviewer is asked, and shadow
+		// must not write, so this is the one place a request is sent.
+		if (final.outcome.verdict === "escalate") {
+			await requestReviewers(transport, repoRef, pullNumber, {
+				...escalationReviewers(final, config),
+				author: author.login,
+			});
+		}
 		return { approved: false, queued: false, skipped: "not_merge" };
 	}
 

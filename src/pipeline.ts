@@ -16,6 +16,7 @@ import {
 } from "./github.js";
 import { type LlmDeps, promptHash, review } from "./llm.js";
 import { planInline } from "./review.js";
+import { ownedTeam } from "./reviewers.js";
 import { type CodeownersRule, type Context, evaluate } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
@@ -184,14 +185,14 @@ export async function evaluatePull(
 			authorClass,
 		);
 		const read = githubReader(transport, repoRef);
+		// Read even without teams.protected: the owning team is what an escalation
+		// asks for a review, and what the brief names.
 		let codeowners: CodeownersRule[] = [];
-		if (config.teams.protected) {
-			for (const path of CODEOWNERS_PATHS) {
-				const text = await read(pr.base.ref, path);
-				if (text !== null) {
-					codeowners = parseCodeowners(text);
-					break;
-				}
+		for (const path of CODEOWNERS_PATHS) {
+			const text = await read(pr.base.ref, path);
+			if (text !== null) {
+				codeowners = parseCodeowners(text);
+				break;
 			}
 		}
 		const bugIssues: number[] = [];
@@ -350,6 +351,11 @@ export async function evaluatePull(
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
 			shadow: config.mode === "shadow",
+			// Shown on the verdict line so an escalation names who it was asked of.
+			ownerTeam: ownedTeam(
+				snapshot.files.map((f) => f.path),
+				codeowners,
+			),
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {

@@ -115,7 +115,24 @@ paths:
 
 The org is always the repo owner from the event; an `org/` prefix on `teams.protected` is ignored, and `teams.maintainers` is a bare slug. Both need an App with organization members read access: a workflow `GITHUB_TOKEN` cannot read org teams. If a team cannot be found or read, the evaluation fails closed: the `castellan` status on the head is set to escalate with the description `castellan: internal error` and the error is rethrown (logged on the Lambda, exit 1 for the Action and CLI). The author is never silently treated as a non-member.
 
-`teams.protected` is the only thing that makes castellan read CODEOWNERS, from the base branch tip, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. Only owners written as `@org/team` are compared; individual users never match.
+CODEOWNERS is read from the base branch tip, trying `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`. `teams.protected` is what makes an owner decide the `protected_owner` rule; the same file also names the team an escalation asks for a review (see [`reviewers`](#reviewers)). Only owners written as `@org/team` are compared; individual users never match.
+
+### `reviewers`
+
+Who an escalation asks for a review. Default is nobody, which is the old behavior.
+
+| Key               | Type       | Default | Effect                                                        |
+| ----------------- | ---------- | ------- | ------------------------------------------------------------- |
+| `reviewers.team`  | team slug  | unset   | requested when no CODEOWNERS rule names a team for the change |
+| `reviewers.users` | `string[]` | `[]`    | GitHub logins added as reviewers on every escalation          |
+
+```yaml
+reviewers:
+  team: maintainers
+  users: [alice]
+```
+
+In `enforce`, an `escalate` verdict requests a review from the first `@org/team` owner of the last CODEOWNERS rule matching each changed file, in file order, falling back to `reviewers.team`, plus `reviewers.users`. The PR author is never requested, because GitHub rejects that. The team is also named on the verdict line as `Owner team: <slug>`. `shadow` requests nothing. The request is best effort: a failure is logged and the escalation still posts, so a PR is never left without its comment over an assignment error.
 
 ```yaml
 teams:
@@ -332,11 +349,11 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 - Verdicts are `merge` and `escalate`. `send_back` is reserved and never emitted.
 - One sticky comment per PR, found by the hidden marker `<!-- castellan` and by being authored by the App (or the token's bot login). It is edited in place, never duplicated. The verdict is the first line, the machine readable state block is always last, and the body stays under 65,000 characters (findings are dropped first).
-- Brief layout: verdict line (with `(shadow)` in shadow), up to 3 reasons, Model review (or one line "Model: not run (rules decided)") with a line counting the inline findings, a collapsed Checks table and a collapsed Provenance list. The table is deduped by check name keeping the newest run (highest check run id), with failed, pending and skipped rows first. At most 3 reasons, 500 characters per reason, 50 rows in the check table. Provenance says whether the model was not run, `fresh` or cached from a sha.
+- Brief layout: verdict line (with `(shadow)` in shadow, and `Owner team: <slug>` when CODEOWNERS names one), up to 3 reasons, Model review (or one line "Model: not run (rules decided)") with a line counting the inline findings, a collapsed Checks table and a collapsed Provenance list. The table is deduped by check name keeping the newest run (highest check run id), with failed, pending and skipped rows first. At most 3 reasons, 500 characters per reason, 50 rows in the check table. Provenance says whether the model was not run, `fresh` or cached from a sha.
 - Reasons that quote model or PR text are made inert: no `@` mentions, links, URLs, HTML or dashes.
 - Commit status context is `castellan`. In `enforce`, `merge` sets `success` ("castellan: merge") and `escalate` sets `pending` ("castellan: escalated to a human"). In `shadow` it is `success` for both verdicts, because `pending` reads as "waiting for status to be reported", and `pending` ("shadow: waiting for CI") only while CI is unsettled. It is never set to `failure`, so an escalation waits for a human instead of blocking.
 - On an unexpected error after the head SHA is known, the status is set to `pending` ("castellan: internal error"; `success` "shadow: internal error" in `shadow`) so a stale verdict cannot stay.
-- Escalate does not request reviewers or assign a team. The brief has a place for an owner team, but nothing fills it today.
+- Escalate requests a review from the owner team when [`reviewers`](#reviewers) or CODEOWNERS names one, and assigns nobody else. It never adds reviewers to a PR it is merging.
 
 ### Acting (`enforce`)
 

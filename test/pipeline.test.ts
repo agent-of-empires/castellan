@@ -28,6 +28,8 @@ interface World {
 	/** A comment body to start from, as a head that already holds a block would. */
 	stickyBody?: string;
 	diff?: string;
+	/** CODEOWNERS content; `yaml` stands in for it when unset. */
+	codeowners?: string;
 }
 
 function world({
@@ -40,6 +42,7 @@ function world({
 	mergeable = true,
 	stickyBody,
 	diff = "diff --git a/src/a.ts b/src/a.ts",
+	codeowners,
 }: World = {}) {
 	const posted = new Map<string, unknown>();
 	let sticky: string | null = stickyBody ?? null;
@@ -60,6 +63,9 @@ function world({
 				return { data: { default_branch: "main" } };
 			}
 			if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+				const file = String(params.path);
+				if (/CODEOWNERS$/.test(file) && codeowners !== undefined)
+					return { data: codeowners };
 				if (yaml === null) throw { status: 404 };
 				return { data: yaml };
 			}
@@ -191,6 +197,12 @@ describe("evaluatePull", () => {
 			"GET /repos/{owner}/{repo}/contents/{path}",
 			expect.objectContaining({ path: ".castellan.yml", ref: "main" }),
 		);
+	});
+
+	it("names the CODEOWNERS team that owns the change on the brief", async () => {
+		const w = world({ codeowners: "src/ @o/platform\n" });
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.ownerTeam).toBe("platform");
 	});
 
 	it("reads CODEOWNERS at the base branch ref", async () => {
