@@ -74,7 +74,7 @@ function glob(p: string) {
 }
 
 /** GitHub CODEOWNERS semantics: no slash means any depth, `dir/` and `dir/**` recurse, `dir/*` does not. */
-function matchesPath(pattern: string, path: string) {
+export function matchesPath(pattern: string, path: string) {
 	const dir = pattern.endsWith("/");
 	const p = pattern.replace(/^\//, "");
 	const anchored =
