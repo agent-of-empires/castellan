@@ -17,6 +17,7 @@ import {
 } from "./github.js";
 import { type LlmDeps, promptHash, review } from "./llm.js";
 import { renderPrevious } from "./previous.js";
+import { relatedOpenPrs } from "./related.js";
 import { planInline } from "./review.js";
 import { ownedTeam } from "./reviewers.js";
 import {
@@ -248,6 +249,19 @@ export async function evaluatePull(
 		// Shadow also runs the model on rule escalations, as advice only.
 		let skipModel =
 			decision.outcome === "escalate" && (config.mode !== "shadow" || !!error);
+		// A fact about the repo, not model work: a second PR in the same files
+		// conflicts for whoever merges second, and no diff shows it. It is not
+		// gated on skipModel, because an enforce escalation is exactly the brief a
+		// human reads. Only PRs on the same base count: a stacked child shares the
+		// files by construction and a release branch PR never meets this one.
+		const related = await relatedOpenPrs(
+			transport,
+			repoRef,
+			pullNumber,
+			snapshot.baseRef,
+			snapshot.files.map((f) => f.path),
+		);
+
 		const sticky = await findStickyComment(transport, repoRef, pullNumber, {
 			login,
 		});
@@ -403,6 +417,7 @@ export async function evaluatePull(
 				codeowners,
 				repoRef.owner,
 			),
+			related: related.length ? related : undefined,
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {

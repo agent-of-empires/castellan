@@ -269,6 +269,23 @@ describe("renderComment", () => {
 		);
 		expect(renderComment(brief)).not.toContain("advisory");
 	});
+	it("names open PRs that change the same files", () => {
+		const body = renderComment({
+			...brief,
+			related: [
+				{ number: 90, title: "tunnel rework", overlap: ["src/a.ts"] },
+				{ number: 91, title: "second @bob fix", overlap: ["src/a.ts"] },
+			],
+		});
+		expect(body).toContain("Open PRs that share files with this PR: #90, #91");
+		// Only the number: another author's title is not rendered into the brief.
+		expect(body).not.toContain("tunnel rework");
+		expect(body).not.toContain("second @bob fix");
+	});
+
+	it("says nothing about open PRs when there are none", () => {
+		expect(renderComment(brief)).not.toContain("Open PRs that share files");
+	});
 });
 
 // Rendered from the first shadow briefs on agent-of-empires (#5510, #5481, #5444).

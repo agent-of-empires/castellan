@@ -382,6 +382,30 @@ describe("evaluatePull", () => {
 		expect(w.sent(1)).toContain("the retry cap is gone");
 	});
 
+	it("names related open PRs even on a rule escalation in enforce", async () => {
+		const w = world({ yaml: "mode: enforce\nlimits: { maxLines: 1 }" });
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequests: {
+					nodes: [
+						{
+							number: 9,
+							baseRefName: "main",
+							files: { nodes: [{ path: "src/a.ts" }] },
+						},
+					],
+				},
+			},
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		// The model never ran, and the brief a human reads still names the other PR.
+		expect(w.create).not.toHaveBeenCalled();
+		expect(r.brief?.related?.map((x) => x.number)).toEqual([9]);
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("#9");
+	});
+
 	it("gives the model the changed files as they read at the head", async () => {
 		const w = world();
 		await evaluatePull(w.env, repo, 3);
