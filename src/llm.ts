@@ -17,6 +17,8 @@ export interface ReviewInput {
 	files?: string;
 	/** Rendered findings from the previous head, from `renderPrevious`. Model output, still untrusted. */
 	previous?: string;
+	/** Fields the snapshot itself cut (the diff, the file list), so the model knows it is reading part of the change. */
+	truncated?: string[];
 }
 
 /** One model finding; also stored in the state block so it can be carried forward. */
@@ -160,9 +162,12 @@ export function hashOf(parts: unknown[]): string {
 	return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
-function buildUserMessage(fields: [string, string | undefined][]): string {
+function buildUserMessage(
+	fields: [string, string | undefined][],
+	cut: string[] = [],
+): string {
 	const boundary = randomBytes(16).toString("hex");
-	const truncated: string[] = [];
+	const truncated: string[] = [...cut];
 	const cap = (name: string, text: string | undefined) => {
 		const limit = CAPS[name];
 		if (text && limit !== undefined && text.length > limit) {
@@ -205,6 +210,8 @@ export interface JsonCall<T> {
 	model: string;
 	schema: z.ZodType<T>;
 	promptHash: string;
+	/** Fields the caller already cut, so the model is told what part it is missing. */
+	truncated?: string[];
 }
 
 export type JsonResult<T> =
@@ -270,7 +277,7 @@ export async function callJson<T>(
 		const price = { ...DEFAULT_PRICES, ...deps.prices }[model];
 		if (!price) return fail("budget", `no price for model ${model}`);
 
-		const user = buildUserMessage(call.fields);
+		const user = buildUserMessage(call.fields, call.truncated);
 		if (deps.maxCostUsd !== undefined) {
 			const estimate =
 				(((system.length + user.length) / 4) * price.input) / 1e6;
@@ -340,6 +347,7 @@ export async function review(
 			model: config.models.review,
 			schema: verdictSchema,
 			promptHash: promptHash(config),
+			truncated: input.truncated,
 		},
 		config,
 		deps,

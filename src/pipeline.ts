@@ -25,6 +25,8 @@ import {
 	type Context,
 	evaluate,
 	GENERATED,
+	onlySizeEscalates,
+	SIZE_RULES,
 } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
@@ -59,6 +61,8 @@ export interface Env {
 	/** For the S3 locator. */
 	fetch?: typeof fetch;
 }
+
+/** Escalation reasons that are about the size of the change, not about what it does. */
 
 const CODEOWNERS_PATHS = [
 	".github/CODEOWNERS",
@@ -246,9 +250,20 @@ export async function evaluatePull(
 			return { status: "waiting" };
 		}
 
-		// Shadow also runs the model on rule escalations, as advice only.
+		// Shadow also runs the model on rule escalations, as advice only, and so does
+		// a PR whose only escalation reasons are the size limits: "too big to merge"
+		// is not a review, and the human who reads it should get the findings too.
+		// Every rule outside the size set must be clean, not just the one that fired.
+		const sizeOnly =
+			decision.outcome === "escalate" &&
+			decision.reasons.length > 0 &&
+			decision.reasons.every((r) => SIZE_RULES.has(r.rule)) &&
+			onlySizeEscalates(snapshot, config, required, ctx);
 		let skipModel =
-			decision.outcome === "escalate" && (config.mode !== "shadow" || !!error);
+			decision.outcome === "escalate" &&
+			(config.mode !== "shadow" || !!error) &&
+			!sizeOnly;
+
 		// A fact about the repo, not model work: a second PR in the same files
 		// conflicts for whoever merges second, and no diff shows it. It is not
 		// gated on skipModel, because an enforce escalation is exactly the brief a
@@ -374,6 +389,10 @@ export async function evaluatePull(
 						threads: rendered.text,
 						files: renderFileContext(files),
 						previous,
+						truncated: [
+							...(snapshot.diffTruncated ? ["diff"] : []),
+							...(snapshot.filesTruncated ? ["files"] : []),
+						],
 					},
 					config,
 					env.llm,

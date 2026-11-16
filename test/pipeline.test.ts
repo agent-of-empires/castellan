@@ -209,6 +209,56 @@ describe("evaluatePull", () => {
 		);
 	});
 
+	it("reviews a PR that only breaks a size limit, and still escalates", async () => {
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\nlimits: { maxLines: 1 }",
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+		expect(r.brief?.review?.ok).toBe(true);
+	});
+
+	it("does not run the model when an oversized PR also breaks another rule", async () => {
+		// The size rule fires first, but an external author still escalates, and the
+		// gate must look at every rule rather than the first hit.
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: []\nlimits: { maxLines: 1 }",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+	});
+
+	it("tells the model when the snapshot cut the diff", async () => {
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			diff: `diff --git a/src/a.ts b/src/a.ts\n${"+line\n".repeat(6000)}`,
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent()).toContain("These fields were truncated: diff");
+	});
+
+	it("keeps the size reason and the escalation when the model fails", async () => {
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\nlimits: { maxLines: 1 }",
+		});
+		w.create.mockRejectedValue(new Error("down"));
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+		expect(r.brief?.outcome.reasons[0]?.rule).toBe("max_lines");
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Model: unavailable");
+	});
+
+	it("does not run the model for a protected path escalation", async () => {
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\npaths:\n  protected: [src/a.ts]",
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+	});
+
 	it("reads config at the base branch ref, not the stale base sha", async () => {
 		const w = world();
 		await evaluatePull(w.env, repo, 3);
