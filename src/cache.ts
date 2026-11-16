@@ -15,6 +15,8 @@ const blockSchema = z.strictObject({
 	threads: z.string().optional(),
 	/** Thread-driven model runs already spent on this head; bounds a commenter's leverage. */
 	threadReruns: z.number().int().min(0).optional(),
+	/** Head SHA whose escalation already asked for reviewers, so a sweep does not ask again. */
+	requested: z.string().optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -41,6 +43,8 @@ export interface CacheKey {
 	threads?: string;
 	/** Persisted with the block; it is not part of the cache key match. */
 	threadReruns?: number;
+	/** Head SHA whose escalation already asked for reviewers. */
+	requested?: string;
 }
 
 export const MARKER = "<!-- castellan";

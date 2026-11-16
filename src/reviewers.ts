@@ -25,8 +25,9 @@ export function ownedTeam(
 /**
  * Asks the configured reviewers for a review. Best effort: a PR that cannot be
  * assigned still gets its escalation comment, so the run is never failed by
- * this. The author is dropped because GitHub rejects a review request for the
- * PR's own author.
+ * this. The PR author is dropped because GitHub rejects a review request for
+ * them. The team travels in its own call, so one invalid user login cannot
+ * reject the request that names the owning team.
  */
 export async function requestReviewers(
 	transport: GithubTransport,
@@ -37,21 +38,21 @@ export async function requestReviewers(
 	const reviewers = users.filter(
 		(u) => u && u.toLowerCase() !== author.toLowerCase(),
 	);
-	if (!team && !reviewers.length) return;
-	try {
-		await transport.request(
-			"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
-			{
-				owner,
-				repo,
-				pull_number: pullNumber,
-				reviewers,
-				team_reviewers: team ? [team] : [],
-			},
-		);
-	} catch (err) {
-		console.warn("requesting a review failed", { error: String(err) });
-	}
+	const ask = async (body: {
+		reviewers?: string[];
+		team_reviewers?: string[];
+	}) => {
+		try {
+			await transport.request(
+				"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+				{ owner, repo, pull_number: pullNumber, ...body },
+			);
+		} catch (err) {
+			console.warn("requesting a review failed", { error: String(err) });
+		}
+	};
+	if (team) await ask({ team_reviewers: [team] });
+	if (reviewers.length) await ask({ reviewers });
 }
 
 /** The CODEOWNERS team if there is one, then `reviewers.team`, plus every `reviewers.users`. */

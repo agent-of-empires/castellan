@@ -57,16 +57,29 @@ describe("requestReviewers", () => {
 			users: ["bob"],
 			author: "alice",
 		});
+		// Two calls, so an invalid user login cannot drop the team request too.
 		expect(request).toHaveBeenCalledWith(
 			"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
-			{
-				owner: "o",
-				repo: "r",
-				pull_number: 3,
-				reviewers: ["bob"],
-				team_reviewers: ["platform"],
-			},
+			{ owner: "o", repo: "r", pull_number: 3, team_reviewers: ["platform"] },
 		);
+		expect(request).toHaveBeenCalledWith(
+			"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+			{ owner: "o", repo: "r", pull_number: 3, reviewers: ["bob"] },
+		);
+	});
+
+	it("keeps the team request when the user request fails", async () => {
+		const request = vi
+			.fn()
+			.mockResolvedValueOnce({ data: {} })
+			.mockRejectedValueOnce(Object.assign(new Error("422"), { status: 422 }));
+		await requestReviewers(
+			{ request } as unknown as GithubTransport,
+			{ owner: "o", repo: "r" },
+			3,
+			{ team: "platform", users: ["nobody"], author: "alice" },
+		);
+		expect(request).toHaveBeenCalledTimes(2);
 	});
 
 	it("drops the PR's author, which GitHub would reject", async () => {
@@ -77,7 +90,7 @@ describe("requestReviewers", () => {
 		});
 		expect(request).toHaveBeenCalledWith(
 			expect.anything(),
-			expect.objectContaining({ reviewers: ["bob"], team_reviewers: [] }),
+			expect.objectContaining({ reviewers: ["bob"] }),
 		);
 	});
 

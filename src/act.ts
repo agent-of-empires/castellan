@@ -141,6 +141,21 @@ export async function act(
 		}
 	};
 
+	// An escalation has nobody watching it until a reviewer is asked, and shadow
+	// must not write, so enforce is the only place this sends. The head is recorded
+	// in the state block so a sweep or a later event does not ask again, including
+	// after a human removed the request.
+	const askReviewers = async (b: Brief) => {
+		if (config.mode !== "enforce" || b.outcome.verdict !== "escalate") return;
+		if (b.key.requested === headSha) return;
+		await requestReviewers(transport, repoRef, pullNumber, {
+			...escalationReviewers(b, config),
+			author: snapshot.author,
+		});
+		b.key.requested = headSha;
+	};
+	await askReviewers(final);
+
 	// An approving review waits for the guards below; a findings review cannot approve anything.
 	const drafted = event === "APPROVE" ? null : await post();
 	// The brief is the record that must not be lost, so a review that did not post
@@ -162,17 +177,7 @@ export async function act(
 	}
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
-	if (!isMerge) {
-		// An escalation has nobody watching it until a reviewer is asked, and shadow
-		// must not write, so this is the one place a request is sent.
-		if (final.outcome.verdict === "escalate") {
-			await requestReviewers(transport, repoRef, pullNumber, {
-				...escalationReviewers(final, config),
-				author: author.login,
-			});
-		}
-		return { approved: false, queued: false, skipped: "not_merge" };
-	}
+	if (!isMerge) return { approved: false, queued: false, skipped: "not_merge" };
 
 	const { data: pr } = await transport.request(
 		"GET /repos/{owner}/{repo}/pulls/{pull_number}",
@@ -188,9 +193,13 @@ export async function act(
 	review = await post();
 	const approved = review?.approved ?? false;
 	if (!approved) {
-		await publish(
-			escalate("review_failed", "could not post the approving review"),
+		const failed = escalate(
+			"review_failed",
+			"could not post the approving review",
 		);
+		// A merge was expected and a human is needed most here, so ask there too.
+		await askReviewers(failed);
+		await publish(failed);
 		return { approved: false, queued: false, skipped: "review_failed" };
 	}
 	try {
@@ -217,7 +226,9 @@ export async function act(
 		}
 		return { approved: true, queued: true };
 	} catch (err) {
-		await publish(escalate("auto_merge_failed", message(err)));
+		const failed = escalate("auto_merge_failed", message(err));
+		await askReviewers(failed);
+		await publish(failed);
 		return { approved, queued: false, skipped: "queue_failed" };
 	}
 }
