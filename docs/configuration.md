@@ -229,10 +229,10 @@ models:
 
 The review system prompt is `prompt.base`, then the numbered `prompt.guidance` entries, then a fixed output format block that cannot be changed.
 
-| Key               | Default                                                                                                                                                                                | Meaning                                               |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `prompt.base`     | built in: "You review a pull request for a merge gate. Decide whether the change matches the linked issue and the PR description, and whether it adds behavior beyond what was asked." | Replaces the base text                                |
-| `prompt.guidance` | `[]`                                                                                                                                                                                   | One entry per house rule, appended as a numbered list |
+| Key               | Default                                                                                                                                                                                                                                                                | Meaning                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `prompt.base`     | built in: "You review a pull request for a merge gate. Decide whether the change matches the linked issue and the PR description, and whether it adds behavior beyond what was asked. Review the change itself too: correctness, tests and the repository's guidance." | Replaces the base text                                |
+| `prompt.guidance` | `[]`                                                                                                                                                                                                                                                                   | One entry per house rule, appended as a numbered list |
 
 Guidance can only make the model stricter in effect: the model can veto, never approve. See [security.md](security.md). `prompt.*` applies to the PR review only; the triage prompt is fixed.
 
@@ -336,9 +336,9 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 ### Snapshot and model limits
 
 - PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates.
-- Labels, issue comments and review bodies are never fetched. Of the PR's review threads, the first comment of each unresolved one is fetched (GraphQL `reviewThreads`, best effort: a failure reads as none), capped at 25 threads and 900 characters each, and castellan's own comments are dropped.
-- Review input: title, body, diff, the body of the first linked issue (3,000 characters) and the unresolved review threads (12,000 characters). A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 4,096 output tokens.
-- The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model, thread key)`. The thread key changes when a thread appears, is resolved or goes stale, so the model re-runs on an unchanged head. In `enforce` a rule escalated PR never reaches the model and its threads are not read at all; in `shadow` it does, as advice.
+- Labels, issue comments and review bodies are never fetched. Of the PR's review threads, the first comment of each unresolved one is fetched (GraphQL `reviewThreads`), newest first. A failed read is not "no threads": castellan keeps the verdict that head already has, or escalates, and never reviews without the threads it expected. Castellan's own comments are dropped, including the `[bot]` suffix difference between the REST and GraphQL logins.
+- Review input: title, body, diff, the body of the first linked issue (3,000 characters) and the unresolved review threads. The thread field is built row by row and never exceeds 12,000 characters, so the count in the brief is what the model read; up to 25 threads at 900 characters each are read, and any that do not fit are said to be left out. A `reviewerSummary` field with an 800 character cap exists in `src/llm.ts` but no caller populates it today. Model call: 30 second timeout, no retries, 4,096 output tokens.
+- The model verdict is cached in the sticky comment per `(head SHA, prompt hash, review model, thread key)`. The thread key changes when a thread appears, is resolved or goes stale, so the model re-runs on an unchanged head. Because anyone who can comment can change that key, one head gets at most 3 thread-driven re-runs; after that the stored verdict stands. In `enforce` a rule escalated PR never reaches the model and its threads are not read at all; in `shadow` it does, as advice.
 
 ### Triage
 

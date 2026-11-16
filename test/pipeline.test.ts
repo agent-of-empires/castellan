@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { GithubTransport } from "../src/github.js";
 import type { MessagesClient } from "../src/llm.js";
 import { evaluatePull, listWork, triageIssue } from "../src/pipeline.js";
+import { MAX_THREAD_RERUNS } from "../src/threads.js";
 
 const repo = { owner: "o", repo: "r" };
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
 const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
+const PATCH_COMMENT =
+	"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}";
 
 const verdict = { intent_match: true, new_behavior: false, reasons: [] };
 
@@ -34,11 +37,16 @@ function world({
 	mergeable = true,
 }: World = {}) {
 	const posted = new Map<string, unknown>();
+	let sticky: string | null = null;
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
 			if (route === STATUS) {
 				posted.set(String(params.context), params);
 				return { data: {} };
+			}
+			if (route === COMMENT || PATCH_COMMENT === route) {
+				sticky = String(params.body ?? "");
+				return { data: { id: 7, html_url: "https://github.com/o/r/pull/3#c" } };
 			}
 			if (route === "GET /repos/{owner}/{repo}/commits/{ref}/status") {
 				return { data: { statuses: [...posted.values()] } };
@@ -95,6 +103,9 @@ function world({
 		}
 		if (route.endsWith("/check-runs")) {
 			return checks;
+		}
+		if (route.endsWith("/comments") && sticky) {
+			return [{ id: 7, user: { login: "castellan[bot]" }, body: sticky }];
 		}
 		if (route.endsWith("/rules/branches/{branch}")) {
 			return [
@@ -312,7 +323,7 @@ describe("evaluatePull", () => {
 								comments: {
 									nodes: [
 										{
-											author: { login: "coderabbitai[bot]" },
+											author: { __typename: "Bot", login: "coderabbitai" },
 											path: "src/a.ts",
 											line: 12,
 											body: "the port is not recorded",
@@ -341,6 +352,65 @@ describe("evaluatePull", () => {
 			expect.stringContaining("reviewThreads"),
 			expect.anything(),
 		);
+	});
+
+	it("keeps the cached verdict when the thread read fails on a known head", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		// A failed read is not "no threads": the stored verdict stands.
+		expect(w.create).toHaveBeenCalledTimes(1);
+	});
+
+	it("escalates without a model call when threads fail and nothing is cached", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+		expect(r.brief?.outcome.reasons[0]?.rule).toBe("threads_unavailable");
+	});
+
+	it("bounds the model runs a head spends on thread changes", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		const thread = (body: string) => ({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: [
+							{
+								id: "T_1",
+								isResolved: false,
+								isOutdated: false,
+								comments: {
+									nodes: [
+										{
+											author: { __typename: "User", login: "outsider" },
+											path: "src/a.ts",
+											line: 12,
+											body,
+										},
+									],
+								},
+							},
+						],
+					},
+				},
+			},
+		});
+		w.graphql.mockResolvedValue(thread("first"));
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		// Each edit changes the key. Only MAX_THREAD_RERUNS edits may pay a model call.
+		for (let i = 0; i < 6; i++) {
+			w.graphql.mockResolvedValue(thread(`edit ${i}`));
+			await evaluatePull(w.env, repo, 3);
+		}
+		expect(w.create).toHaveBeenCalledTimes(1 + MAX_THREAD_RERUNS);
 	});
 });
 

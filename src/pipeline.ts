@@ -22,7 +22,13 @@ import {
 	statusFor,
 	waitingStatus,
 } from "./status.js";
-import { readThreads, renderThreads, threadsKey } from "./threads.js";
+import {
+	MAX_THREAD_RERUNS,
+	type ReviewThread,
+	readThreads,
+	renderThreads,
+	threadsKey,
+} from "./threads.js";
 import { type TriageResult, triage } from "./triage.js";
 import { decide } from "./verdict.js";
 
@@ -230,24 +236,66 @@ export async function evaluatePull(
 		}
 
 		// Shadow also runs the model on rule escalations, as advice only.
-		const skipModel =
+		let skipModel =
 			decision.outcome === "escalate" && (config.mode !== "shadow" || !!error);
-		// Unresolved threads are what a reviewer answers first, so they are part of
-		// the model input and of the cache key: a new thread must re-run the model.
-		const threads = skipModel
-			? []
-			: await readThreads(transport, repoRef, pullNumber, login);
 		const sticky = await findStickyComment(transport, repoRef, pullNumber, {
 			login,
 		});
-		const key = {
+		const cached = sticky ? parseBlock(sticky.body) : null;
+		const head = {
 			headSha: snapshot.headSha,
 			promptHash: promptHash(config),
 			model: config.models.review,
-			threads: threadsKey(threads),
+		};
+		const sameHead =
+			!!cached?.llm &&
+			cached.headSha === head.headSha &&
+			cached.promptHash === head.promptHash &&
+			cached.model === head.model;
+
+		// Unresolved threads are what a reviewer answers first, so they are part of
+		// the model input and of the cache key: a new thread must re-run the model.
+		let threads: ReviewThread[] = [];
+		let keepCached = false;
+		if (!skipModel) {
+			const read = await readThreads(transport, repoRef, pullNumber, login);
+			if (read.ok) {
+				threads = read.threads;
+			} else if (sameHead) {
+				// A failed read is not "no threads": keep the verdict this head already has.
+				keepCached = true;
+			} else {
+				decision = {
+					outcome: "escalate",
+					reasons: [
+						{
+							rule: "threads_unavailable",
+							text: "review threads unavailable, retrying on the next event",
+						},
+					],
+				};
+				skipModel = true;
+			}
+		}
+		const rendered = renderThreads(threads);
+		const threadKey = threadsKey(threads);
+		const spent =
+			cached?.headSha === head.headSha ? (cached.threadReruns ?? 0) : 0;
+		const threadChanged = sameHead && cached?.threads !== threadKey;
+		// Anyone who can comment can change this key, so a head gets a bounded number
+		// of thread-driven runs; past the cap the stored verdict stands.
+		const capped = threadChanged && spent >= MAX_THREAD_RERUNS;
+		const key = {
+			...head,
+			threads:
+				(keepCached || capped) && cached?.threads ? cached.threads : threadKey,
+			threadReruns:
+				!skipModel && !keepCached && !capped && threadChanged
+					? spent + 1
+					: spent,
 		};
 		const dedup = await getOrRun({
-			cached: sticky ? parseBlock(sticky.body) : null,
+			cached,
 			key,
 			skipModel,
 			run: async () => {
@@ -259,7 +307,7 @@ export async function evaluatePull(
 						body: snapshot.body,
 						diff: snapshot.diff,
 						linkedIssueBody: issue?.body ?? undefined,
-						threads: renderThreads(threads),
+						threads: rendered.text,
 					},
 					config,
 					env.llm,
@@ -279,7 +327,8 @@ export async function evaluatePull(
 			outcome,
 			key,
 			checks: snapshot.checks,
-			threads: threads.length || undefined,
+			threads: rendered.included || undefined,
+			threadsDropped: rendered.dropped || undefined,
 			review: result?.ok ? result : undefined,
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,

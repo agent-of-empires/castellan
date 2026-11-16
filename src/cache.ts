@@ -13,6 +13,8 @@ const blockSchema = z.strictObject({
 	model: z.string(),
 	/** `threadsKey` of the unresolved threads the verdict answered; absent on an older block. */
 	threads: z.string().optional(),
+	/** Thread-driven model runs already spent on this head; bounds a commenter's leverage. */
+	threadReruns: z.number().int().min(0).optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -37,6 +39,8 @@ export interface CacheKey {
 	model: string;
 	/** Changes when a review thread appears, is resolved or goes stale. */
 	threads?: string;
+	/** Persisted with the block; it is not part of the cache key match. */
+	threadReruns?: number;
 }
 
 export const MARKER = "<!-- castellan";

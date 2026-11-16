@@ -24,8 +24,10 @@ export interface Brief {
 	review?: OkReviewResult;
 	/** Why the model call failed, when it did. */
 	reviewError?: FailureReason;
-	/** Unresolved review threads the model was asked to check. */
+	/** Unresolved review threads that reached the model. */
 	threads?: number;
+	/** Unresolved threads read but left out of the model field by the caps. */
+	threadsDropped?: number;
 	/** `cache` means `review.costUsd` was paid by an earlier run. */
 	source: "cache" | "llm" | "skipped";
 	/** Marks the verdict line as shadow. */
@@ -157,8 +159,12 @@ export function renderComment(brief: Brief): string {
 				]
 			: []),
 		...modelIntro(brief),
-		...(brief.threads
+		// Only a run that reached the model checked anything.
+		...(brief.threads && brief.review
 			? [`- Unresolved review threads checked: ${brief.threads}`]
+			: []),
+		...(brief.threadsDropped && brief.review
+			? [`- Unresolved review threads not sent: ${brief.threadsDropped}`]
 			: []),
 	];
 	const tail = ["", ...checksSection(brief), "", ...provenance(brief), ""];
