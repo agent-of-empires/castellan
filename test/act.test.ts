@@ -10,6 +10,8 @@ const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
 const MERGE = "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge";
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
+const DISMISS =
+	"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals";
 
 const repo = { owner: "o", repo: "r" };
 const author = { login: "castellan[bot]" };
@@ -48,6 +50,31 @@ const brief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 	} as Brief["key"],
 	checks: [],
 	source: "skipped",
+});
+
+/** A brief the model wrote, with one anchored finding. */
+const modelBrief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
+	...brief(verdict),
+	source: "llm",
+	inline: [{ index: 0, path: "src/a.ts", line: 2 }],
+	review: {
+		ok: true,
+		verdict: {
+			intent_match: true,
+			new_behavior: false,
+			reasons: [
+				{
+					severity: "concern",
+					text: "the port is not recorded",
+					path: "src/a.ts",
+					line: 2,
+				},
+			],
+		},
+		usage: { inputTokens: 1, outputTokens: 1 },
+		costUsd: 0,
+		promptHash: "p",
+	},
 });
 
 interface World {
@@ -96,14 +123,20 @@ function fake({
 	} as unknown as GithubTransport;
 	const routes = () => request.mock.calls.map((c) => c[0]);
 	const sent = (route: string) =>
-		request.mock.calls.filter((c) => c[0] === route).map((c) => c[1]);
+		request.mock.calls
+			.filter((c) => c[0] === route)
+			.map((c) => c[1] as { body?: string; comments?: unknown[] });
 	return { transport, request, paginate, graphql, routes, sent };
 }
 
 const run = async (
 	yaml: string,
 	w: World = {},
-	over: { files?: string[]; verdict?: "merge" | "escalate" } = {},
+	over: {
+		files?: string[];
+		verdict?: "merge" | "escalate";
+		brief?: Brief;
+	} = {},
 ) => {
 	const f = fake(w);
 	const result = await act(f.transport, repo, {
@@ -111,11 +144,134 @@ const run = async (
 		snapshot: snapshot(over.files),
 		config: await load(yaml),
 		ctx,
-		brief: brief(over.verdict),
+		brief: over.brief ?? brief(over.verdict),
 		author,
 	});
 	return { ...f, result };
 };
+
+describe("an earlier blocker", () => {
+	const blocker = (over: Record<string, unknown> = {}) => ({
+		id: 5,
+		user: { login: author.login },
+		commit_id: "head0",
+		state: "CHANGES_REQUESTED",
+		...over,
+	});
+
+	it("is dismissed when a later head reports none", async () => {
+		const { request } = await run("mode: enforce", {
+			reviews: [blocker()],
+		});
+		expect(request).toHaveBeenCalledWith(
+			DISMISS,
+			expect.objectContaining({ review_id: 5 }),
+		);
+	});
+
+	it("is dismissed in shadow too, where nothing replaces it", async () => {
+		const { request } = await run("mode: shadow", { reviews: [blocker()] });
+		expect(request).toHaveBeenCalledWith(
+			DISMISS,
+			expect.objectContaining({ review_id: 5 }),
+		);
+	});
+
+	it("stands while this head still has a blocker", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{ reviews: [blocker()] },
+			{ brief: b },
+		);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+	});
+
+	it("is ignored when it belongs to another reviewer or is an approval", async () => {
+		const other = await run("mode: enforce", {
+			reviews: [blocker({ user: { login: "someone" } })],
+		});
+		expect(other.request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+
+		const approval = await run("mode: enforce", {
+			reviews: [blocker({ state: "APPROVED" })],
+		});
+		expect(approval.request).not.toHaveBeenCalledWith(
+			DISMISS,
+			expect.anything(),
+		);
+	});
+});
+
+describe("inline findings", () => {
+	it("posts a comment review with the anchored finding in shadow", async () => {
+		const { request, sent, result } = await run(
+			"mode: shadow\nreview: { inline: true }",
+			{},
+			{
+				brief: modelBrief("escalate"),
+			},
+		);
+		expect(result).toEqual({ approved: false, queued: false });
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({
+				event: "COMMENT",
+				commit_id: "head1",
+				// `index` is castellan's own bookkeeping and is not a review field.
+				comments: [
+					{
+						path: "src/a.ts",
+						line: 2,
+						body: "the port is not recorded",
+					},
+				],
+			}),
+		);
+		// The state block still holds the finding; the visible brief must not repeat it.
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("Inline findings: 1");
+		expect(body).not.toContain("the port is not recorded");
+	});
+
+	it("approves alone and keeps a merge verdict's findings in the brief", async () => {
+		const { sent, result } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{},
+			{
+				brief: modelBrief(),
+			},
+		);
+		expect(result).toEqual({ approved: true, queued: true });
+		// Inline comments open threads that a conversation-resolution ruleset holds
+		// the auto-merge on, so an approval never carries them.
+		expect(sent(APPROVE).at(-1)).toMatchObject({
+			event: "APPROVE",
+			commit_id: "head1",
+		});
+		expect(sent(APPROVE).at(-1)?.comments).toBeUndefined();
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
+	});
+
+	it("keeps the findings in the brief when the review cannot be posted", async () => {
+		const { sent } = await run(
+			"mode: shadow\nreview: { inline: true }",
+			{ reviewError: new Error("422") },
+			{ brief: modelBrief("escalate") },
+		);
+		const body = sent(COMMENT)[0]?.body ?? "";
+		expect(body).toContain("the port is not recorded");
+		expect(body).not.toContain("Inline findings");
+	});
+
+	it("posts no review when nothing could be anchored", async () => {
+		const { routes } = await run("mode: shadow\nreview: { inline: true }");
+		expect(routes()).not.toContain(APPROVE);
+	});
+});
 
 describe("modes", () => {
 	it("off does nothing", async () => {
@@ -347,7 +503,7 @@ describe("queue failures", () => {
 		});
 	});
 
-	it("escalates without queuing when the review POST fails with 422", async () => {
+	it("escalates without queuing when the approving review fails with 422", async () => {
 		const { sent, graphql, result } = await run("mode: enforce", {
 			reviewError: new Error(
 				"Unprocessable Entity: Can not approve your own pull request",
@@ -360,7 +516,9 @@ describe("queue failures", () => {
 		expect(result).toEqual({
 			approved: false,
 			queued: false,
-			skipped: "queue_failed",
+			skipped: "review_failed",
 		});
+		const last = sent(COMMENT).at(-1)?.body ?? "";
+		expect(last).toContain("could not post the approving review");
 	});
 });

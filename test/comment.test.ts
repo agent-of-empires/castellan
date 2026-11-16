@@ -5,6 +5,7 @@ import {
 	type Brief,
 	escapeText,
 	renderComment,
+	renderReviewBody,
 } from "../src/comment.js";
 import type { OkReviewResult } from "../src/llm.js";
 
@@ -39,8 +40,59 @@ const brief: Brief = {
 	ownerTeam: "maintainers",
 };
 
+/** The same brief with its first finding posted inline instead. */
+const anchored: Brief = {
+	...brief,
+	inline: [{ index: 0, path: "src/a.ts", line: 3 }],
+};
+
 const EM = String.fromCharCode(0x2014);
 const EN = String.fromCharCode(0x2013);
+
+describe("inline findings", () => {
+	it("counts them and leaves them out of the brief", () => {
+		// The state block still caches the finding; the visible brief must not repeat it.
+		const body = renderComment(anchored).split("<!-- castellan")[0];
+		expect(body).toContain(
+			"Inline findings: 1 (on the diff, not repeated here)",
+		);
+		expect(body).not.toContain("missing test");
+		// The finding that could not be anchored stays.
+		expect(body).toContain("- **nit** naming");
+	});
+
+	it("renders a short review body that points at the brief", () => {
+		const body = renderReviewBody(anchored);
+		expect(body).toContain("**Castellan: merge** at `abcdef1`");
+		expect(body).toContain("1 finding inline on the diff.");
+		expect(body).toContain("holds the rules, checks and provenance");
+	});
+
+	it("keeps the rule reasons in the review body", () => {
+		const body = renderReviewBody({
+			...brief,
+			outcome: {
+				verdict: "escalate",
+				reasons: [{ rule: "max_lines", text: "646 changed lines" }],
+			},
+		});
+		expect(body).toContain("**Castellan: escalate**");
+		expect(body).toContain("1. 646 changed lines");
+	});
+
+	it("keeps a rule reason even when a model finding is inline", () => {
+		// `inline` indexes the model's reasons, so it must not filter `outcome.reasons`.
+		const body = renderReviewBody({
+			...brief,
+			inline: [{ index: 0, path: "src/a.ts", line: 1 }],
+			outcome: {
+				verdict: "escalate",
+				reasons: [{ rule: "max_lines", text: "646 changed lines" }],
+			},
+		});
+		expect(body).toContain("1. 646 changed lines");
+	});
+});
 
 describe("renderComment", () => {
 	it("renders the brief", () => {

@@ -194,11 +194,13 @@ describe("review", () => {
 		});
 	});
 
-	it("strips unknown reason keys and maps a null path to undefined", async () => {
+	it("keeps an anchor, strips unknown reason keys and maps a null path to undefined", async () => {
 		const { client } = fake(
 			JSON.stringify({
 				...good,
-				reasons: [{ severity: "nit", text: "t", path: null, line: 3 }],
+				reasons: [
+					{ severity: "nit", text: "t", path: null, line: 3, why: "x" },
+				],
 			}),
 		);
 		const r = await review(input, await cfg(), { client });
@@ -208,8 +210,9 @@ describe("review", () => {
 				severity: "nit",
 				text: "t",
 				path: undefined,
+				line: 3,
 			});
-			expect("line" in (r.verdict.reasons[0] ?? {})).toBe(false);
+			expect("why" in (r.verdict.reasons[0] ?? {})).toBe(false);
 		}
 	});
 

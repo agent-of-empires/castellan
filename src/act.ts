@@ -1,6 +1,14 @@
-import { type Brief, renderComment } from "./comment.js";
+import { type Brief, renderComment, renderReviewBody } from "./comment.js";
 import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
+import {
+	dismissStaleBlocker,
+	inlineComments,
+	postedAnchors,
+	type ReviewEvent,
+	type ReviewOutcome,
+	submitReview,
+} from "./review.js";
 import { type Context, touchesProtected } from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
@@ -24,7 +32,8 @@ export interface ActResult {
 		| "not_merge"
 		| "not_open"
 		| "stale_head"
-		| "queue_failed";
+		| "queue_failed"
+		| "review_failed";
 }
 
 const ENABLE_AUTO_MERGE = `mutation($id: ID!, $oid: GitObjectID!) {
@@ -37,9 +46,13 @@ const message = (err: unknown) =>
 	err instanceof Error ? err.message : String(err);
 
 /**
- * off: nothing. shadow: comment and status only. enforce: also approve and queue
- * a squash auto-merge, only for a `merge` verdict on a head that has not moved.
- * Safe to re-run sequentially on the same head; concurrent runs can both approve.
+ * off: nothing. shadow: one review with the anchored findings (`COMMENT` only) plus
+ * the comment and status. enforce: also approves, and queues a squash auto-merge,
+ * only for a `merge` verdict on a head that has not moved; a posted blocker there is
+ * `REQUEST_CHANGES`, which the approval on a later head supersedes. Inline findings
+ * need `review.inline: true` and are never posted on a merge verdict. Findings that
+ * could not be anchored, were already posted, or could not be posted stay in the
+ * brief. Safe to re-run sequentially on the same head; concurrent runs can both approve.
  */
 export async function act(
 	transport: GithubTransport,
@@ -85,10 +98,70 @@ export async function act(
 					"touches a protected path, protected team or governance file",
 				)
 			: brief;
-	await publish(final);
+	const isMerge = final.outcome.verdict === "merge";
+	// A merge verdict never carries inline comments: each one opens a thread that a
+	// ruleset requiring conversation resolution would hold the auto-merge on. Those
+	// findings stay in the brief instead, and the approval travels alone.
+	const planned =
+		config.review.inline && !isMerge
+			? inlineComments(final.inline ?? [], final.review?.verdict.reasons ?? [])
+			: [];
+	const already = planned.length
+		? await postedAnchors(transport, repoRef, pullNumber, author.login)
+		: new Set<string>();
+	const comments = planned.filter((c) => !already.has(`${c.path}:${c.line}`));
+	const reasons = final.review?.verdict.reasons ?? [];
+	const blocking = comments.some(
+		(c) => reasons[c.index]?.severity === "blocker",
+	);
+	const event: ReviewEvent =
+		config.mode === "enforce" && isMerge
+			? "APPROVE"
+			: config.mode === "enforce" && blocking
+				? "REQUEST_CHANGES"
+				: "COMMENT";
+	const postedInline = final.inline?.filter((i) =>
+		comments.some((c) => c.index === i.index),
+	);
+	const post = async (): Promise<ReviewOutcome | null> => {
+		if (!comments.length && event !== "APPROVE") return null;
+		try {
+			return await submitReview(transport, repoRef, {
+				pullNumber,
+				headSha,
+				event,
+				body: renderReviewBody(final),
+				comments,
+				login: author.login,
+			});
+		} catch (err) {
+			console.error("review post failed", { error: message(err) });
+			return null;
+		}
+	};
+
+	// An approving review waits for the guards below; a findings review cannot approve anything.
+	const drafted = event === "APPROVE" ? null : await post();
+	// The brief is the record that must not be lost, so a review that did not post
+	// leaves every finding in the brief rather than claiming they are on the diff.
+	await publish({
+		...final,
+		inline: drafted && postedInline?.length ? postedInline : undefined,
+	});
+	let review = drafted;
+
+	// No anchored blocker at this head, so an earlier one must not keep the PR
+	// blocked: GitHub would hold the old `REQUEST_CHANGES` until a later review.
+	if (event !== "REQUEST_CHANGES") {
+		await dismissStaleBlocker(transport, repoRef, {
+			pullNumber,
+			headSha,
+			login: author.login,
+		});
+	}
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
-	if (final.outcome.verdict !== "merge") {
+	if (!isMerge) {
 		return { approved: false, queued: false, skipped: "not_merge" };
 	}
 
@@ -103,30 +176,15 @@ export async function act(
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
 
-	const reviews = await transport.paginate(
-		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-		{ owner, repo, pull_number: pullNumber, per_page: 100 },
-	);
-	let approved = reviews.some(
-		(r) =>
-			r.user?.login === author.login &&
-			r.state === "APPROVED" &&
-			r.commit_id === headSha,
-	);
+	review = await post();
+	const approved = review?.approved ?? false;
+	if (!approved) {
+		await publish(
+			escalate("review_failed", "could not post the approving review"),
+		);
+		return { approved: false, queued: false, skipped: "review_failed" };
+	}
 	try {
-		if (!approved) {
-			await transport.request(
-				"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-				{
-					owner,
-					repo,
-					pull_number: pullNumber,
-					commit_id: headSha,
-					event: "APPROVE",
-				},
-			);
-			approved = true;
-		}
 		if (!pr.auto_merge) {
 			try {
 				await transport.graphql(ENABLE_AUTO_MERGE, {

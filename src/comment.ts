@@ -4,6 +4,7 @@
  */
 import { type CacheKey, serializeBlock } from "./cache.js";
 import type { FailureReason, OkReviewResult } from "./llm.js";
+import type { InlineFinding } from "./review.js";
 import type { Snapshot } from "./snapshot.js";
 import type { Outcome } from "./verdict.js";
 
@@ -32,6 +33,8 @@ export interface Brief {
 	threadsCapped?: boolean;
 	/** `cache` means `review.costUsd` was paid by an earlier run. */
 	source: "cache" | "llm" | "skipped";
+	/** Model findings posted as inline review comments, by index into `review.verdict.reasons`. */
+	inline?: InlineFinding[];
 	/** Marks the verdict line as shadow. */
 	shadow?: boolean;
 	/** Plain team slug; never rendered as a mention. */
@@ -79,13 +82,25 @@ function modelIntro(brief: Brief): string[] {
 	];
 }
 
-function findings({ review }: Brief): string[] {
+/** Findings that stayed in the brief, so an inline finding is not repeated here. */
+function findings({ review, inline }: Brief): string[] {
+	const sent = new Set(inline?.map((i) => i.index) ?? []);
 	return (
-		review?.verdict.reasons.map(
-			(r) => `- **${r.severity}** ${escapeText(r.text)}${at(r.path)}`,
+		review?.verdict.reasons.flatMap((r, i) =>
+			sent.has(i)
+				? []
+				: [`- **${r.severity}** ${escapeText(r.text)}${at(r.path)}`],
 		) ?? []
 	);
 }
+
+/** Texts already posted inline, so a model veto is not numbered twice. */
+const inlineTexts = (brief: Brief) =>
+	new Set(
+		(brief.inline ?? []).map(
+			(i) => brief.review?.verdict.reasons[i.index]?.text ?? "",
+		),
+	);
 
 const RANK: Record<string, number> = { pending: 1, skipped: 2 };
 const PASSED = new Set(["success", "neutral"]);
@@ -146,8 +161,12 @@ function provenance({ key, review, source }: Brief): string[] {
 
 export function renderComment(brief: Brief): string {
 	const { outcome, key, review, ownerTeam, shadow } = brief;
-	const shown = outcome.reasons.slice(0, MAX_REASONS);
-	const more = outcome.reasons.length - shown.length;
+	const sent = inlineTexts(brief);
+	const listed = outcome.reasons.filter(
+		(r) => !(r.rule.startsWith("llm_") && sent.has(r.text)),
+	);
+	const shown = listed.slice(0, MAX_REASONS);
+	const more = listed.length - shown.length;
 	const head = [
 		"## Castellan brief",
 		"",
@@ -173,6 +192,11 @@ export function renderComment(brief: Brief): string {
 					"- Review threads changed after this head used up its re-run budget: the earlier verdict stands.",
 				]
 			: []),
+		...(brief.inline?.length
+			? [
+					`- Inline findings: ${brief.inline.length} (on the diff, not repeated here)`,
+				]
+			: []),
 	];
 	const tail = ["", ...checksSection(brief), "", ...provenance(brief), ""];
 	const { promptHash: _h, ...llm } = review ?? {};
@@ -196,4 +220,29 @@ export function renderComment(brief: Brief): string {
 		kept.push(`(+${lines.length - kept.length} more findings omitted)`);
 	}
 	return `${[...head, ...kept, ...tail].join("\n")}\n${block}`;
+}
+
+/**
+ * The body of the review that carries the inline findings. The pinned brief keeps
+ * the rules, checks and provenance, so this stays short on purpose.
+ */
+export function renderReviewBody(brief: Brief): string {
+	const { outcome, key, shadow, inline } = brief;
+	// `inline` indexes the model's reasons while `outcome.reasons` is a different
+	// list, so the filter matches on text, as `renderComment` does.
+	const sent = inlineTexts(brief);
+	const rest = outcome.reasons
+		.filter((r) => !sent.has(r.text))
+		.slice(0, MAX_REASONS);
+	const count = inline?.length ?? 0;
+	return [
+		`**Castellan: ${outcome.verdict}** at \`${key.headSha.slice(0, 7)}\`${shadow ? " (shadow)" : ""}`,
+		"",
+		...rest.map((r, i) => `${i + 1}. ${reason(r.text)}${at(r.path)}`),
+		...(rest.length ? [""] : []),
+		...(count
+			? [`${count} finding${count === 1 ? "" : "s"} inline on the diff.`]
+			: []),
+		"The pinned brief on this pull request holds the rules, checks and provenance.",
+	].join("\n");
 }
