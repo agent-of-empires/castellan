@@ -3,8 +3,8 @@ import {
 	type OkReviewResult,
 	type ReviewResult,
 	reasonSchema,
+	storedVerdictSchema,
 	type Verdict,
-	verdictSchema,
 } from "./llm.js";
 
 const blockSchema = z.strictObject({
@@ -26,7 +26,7 @@ const blockSchema = z.strictObject({
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
-			verdict: verdictSchema,
+			verdict: storedVerdictSchema,
 			usage: z.strictObject({
 				inputTokens: z.number(),
 				outputTokens: z.number(),
