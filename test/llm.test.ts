@@ -29,6 +29,7 @@ async function cfg(yaml = "") {
 
 const good = {
 	intent_match: true,
+	escalate: false,
 	new_behavior: false,
 	reasons: [{ severity: "nit", text: "typo", path: "a.ts" }],
 };
@@ -78,6 +79,18 @@ describe("buildSystemPrompt", () => {
 			"Never report that you checked something and found it clean",
 		);
 		expect(p).toContain("A change with no defects has an empty reasons array");
+	});
+
+	it("asks for the size judgement only when the mode reads it", async () => {
+		const judged = buildSystemPrompt(await cfg("size: model"));
+		expect(judged).toContain('Set "escalate" to true');
+		expect(judged).toContain('"escalate": boolean');
+
+		const off = buildSystemPrompt(await cfg("size: off"));
+		expect(off).not.toContain('Set "escalate" to true');
+		expect(off).not.toContain('"escalate": boolean');
+		// The rest of the contract still goes out.
+		expect(off).toContain("Every reason must name a defect");
 	});
 
 	it("tells the model what a review thread is", async () => {
@@ -237,6 +250,20 @@ describe("review", () => {
 			"bad severity",
 			JSON.stringify({ ...good, reasons: [{ severity: "x", text: "t" }] }),
 		],
+		// The size judgement in `size: model`, so a reply without it is not "not too big".
+		[
+			"no escalated answer",
+			JSON.stringify({
+				intent_match: true,
+				new_behavior: false,
+				reasons: [],
+			}),
+		],
+		["escalated with no concern", JSON.stringify({ ...good, escalate: true })],
+		[
+			"escalated with a blank concern",
+			JSON.stringify({ ...good, escalate: true, escalation: "   " }),
+		],
 	])("fails closed with invalid_output on %s", async (_n, text) => {
 		const { client } = fake(text);
 		expect(await review(input, await cfg(), { client })).toMatchObject({
@@ -302,6 +329,31 @@ describe("review", () => {
 			ok: false,
 			error: "missing_key",
 		});
+	});
+});
+
+describe("the size judgement in the reply", () => {
+	it("is not required when the mode ignores it", async () => {
+		const { create, client } = fake(
+			JSON.stringify({ intent_match: true, new_behavior: false, reasons: [] }),
+		);
+		const r = await review(input, await cfg("size: off"), { client });
+		expect(r.ok).toBe(true);
+		expect(r.ok && r.verdict.escalate).toBe(false);
+		expect(create).toHaveBeenCalledTimes(1);
+	});
+
+	it("still fails closed when the mode reads it and no concern is named", async () => {
+		const { client } = fake(
+			JSON.stringify({
+				intent_match: true,
+				new_behavior: false,
+				escalate: true,
+				reasons: [],
+			}),
+		);
+		const r = await review(input, await cfg("size: fixed"), { client });
+		expect(r.ok).toBe(false);
 	});
 });
 

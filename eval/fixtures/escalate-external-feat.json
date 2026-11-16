@@ -43,6 +43,7 @@
 		"verdict": {
 			"intent_match": true,
 			"new_behavior": false,
+			"escalate": false,
 			"reasons": []
 		},
 		"usage": {

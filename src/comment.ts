@@ -77,11 +77,19 @@ function modelIntro(brief: Brief): string[] {
 				: "Model: not run (rules decided)",
 		];
 	}
-	const { intent_match, new_behavior } = review.verdict;
+	const { intent_match, new_behavior, escalation } = review.verdict;
+	// Only when the answer changed the verdict: in `size: off` the model may still
+	// answer, and a merge it did not withhold must not read as blocked here.
+	const escalate = brief.outcome.reasons.some((r) => r.rule === "llm_escalate");
 	return [
 		`### Model review${rulesDecided(brief) ? " (advisory, rules decided the verdict)" : ""}`,
 		`- Matches the linked issue and description: ${yesNo(intent_match)}`,
 		`- Adds behavior beyond the request: ${yesNo(new_behavior)}`,
+		...(escalate
+			? [
+					`- Needs a human: ${escapeText(escalation ?? "yes, for a reason the model did not name")}`,
+				]
+			: []),
 	];
 }
 

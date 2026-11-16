@@ -87,4 +87,9 @@ export const llm = (verdict: object) => {
 		deps: { client: { messages: { create } } as unknown as MessagesClient },
 	};
 };
-export const merge = { intent_match: true, new_behavior: false, reasons: [] };
+export const merge = {
+	intent_match: true,
+	new_behavior: false,
+	escalate: false,
+	reasons: [],
+};

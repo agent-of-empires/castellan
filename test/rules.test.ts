@@ -8,7 +8,9 @@ const load = async (yaml = "") => {
 	if (!r.ok) throw new Error(r.error);
 	return r.config;
 };
-const config = await load();
+// The size numbers are opt-in, so the size rules are tested with them set.
+const SIZED = "limits: { maxLines: 100, maxFiles: 5, maxTopLevelDirs: 2 }";
+const config = await load(SIZED);
 
 const file = (path: string, additions = 5, deletions = 0) => ({
 	path,
@@ -374,14 +376,56 @@ describe("escalate rules", () => {
 		checks: [{ name: "ci", conclusion: "cancelled" }],
 	});
 	escalates("coderabbit", { codeRabbit: "CHANGES_REQUESTED" });
-	escalates("max_lines", { files: [file("src/a.ts", 60, 41)] });
-	escalates("max_files", {
-		files: ["a", "b", "c", "d", "e", "f"].map((n) => file(`src/${n}.ts`, 1)),
-	});
+	escalates(
+		"max_lines",
+		{ files: [file("src/a.ts", 60, 41)] },
+		{ yaml: SIZED },
+	);
+	escalates(
+		"max_files",
+		{
+			files: ["a", "b", "c", "d", "e", "f"].map((n) => file(`src/${n}.ts`, 1)),
+		},
+		{ yaml: SIZED },
+	);
 	escalates("max_files", { filesTruncated: true });
-	escalates("max_dirs", {
-		files: [file("src/a.ts", 1), file("test/a.ts", 1), file("docs/a.md", 1)],
+	escalates(
+		"max_dirs",
+		{
+			files: [file("src/a.ts", 1), file("test/a.ts", 1), file("docs/a.md", 1)],
+		},
+		{ yaml: SIZED },
+	);
+	// 2,400 lines over six files in six dirs: only a configured number can call that too big.
+	const big = snap({
+		files: [
+			"src/a.ts",
+			"test/a.ts",
+			"docs/a.md",
+			"b/c.ts",
+			"d/e.ts",
+			"f/g.ts",
+		].map((p) => file(p, 400)),
 	});
+
+	it("leaves scale to the model in `size: model`", async () => {
+		const c = await load("size: model");
+		expect(rulesOf(run(big, c))).toEqual([]);
+		expect(run(big, c).outcome).toBe("candidate");
+	});
+
+	it("keeps the numbers by default, so an upgrade does not loosen the gate", async () => {
+		const c = await load();
+		expect(rulesOf(run(big, c))).toEqual(["max_lines"]);
+		expect(run(big, c).outcome).toBe("escalate");
+	});
+
+	it("runs no size rule at all in `size: off`", async () => {
+		const c = await load("size: off");
+		expect(rulesOf(run(big, c))).toEqual([]);
+		expect(run(big, c).outcome).toBe("candidate");
+	});
+
 	escalates("diff_truncated", { diffTruncated: true });
 	escalates("body_truncated", { bodyTruncated: true });
 	escalates("migration", { files: [file("db/migrations/001.sql")] });
@@ -553,8 +597,9 @@ describe("author classes", () => {
 });
 
 describe("order", () => {
-	const yaml =
-		"paths: { protected: ['src/auth/**'] }\nteams: { protected: sec }";
+	const yaml = `paths: { protected: ['src/auth/**'] }
+teams: { protected: sec }
+${SIZED}`;
 	const x = ctx({
 		codeowners: [{ pattern: "/src/core/", owners: ["@org/sec"] }],
 	});

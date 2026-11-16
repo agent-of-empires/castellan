@@ -46,13 +46,60 @@ export const reasonSchema = z.object({
 		.optional(),
 });
 
-export const verdictSchema = z.strictObject({
+export const verdictSchema = z
+	.strictObject({
+		intent_match: z.boolean(),
+		new_behavior: z.boolean(),
+		/**
+		 * A change only a human can settle. Required, not optional: this is the
+		 * size judgement when `size: model`, so a reply that omits it must fail
+		 * closed like one that omits `intent_match`.
+		 */
+		escalate: z.boolean(),
+		/** Why a human has to look. The schema requires it whenever `escalate` is true. */
+		escalation: z
+			.string()
+			.nullish()
+			.transform((v) => (v?.trim() ? v.trim() : undefined))
+			.optional(),
+		reasons: z.array(reasonSchema),
+	})
+	.refine((v) => !v.escalate || v.escalation !== undefined, {
+		message: "escalate needs a non-empty escalation",
+		path: ["escalation"],
+	});
+
+export type Verdict = z.infer<typeof verdictSchema>;
+
+/** `size: off` never asks for the judgement, so a reply without it is not a failure. */
+const unjudgedVerdictSchema = z.strictObject({
 	intent_match: z.boolean(),
 	new_behavior: z.boolean(),
+	escalate: z.boolean().optional().default(false),
+	escalation: z
+		.string()
+		.nullish()
+		.transform((v) => (v?.trim() ? v.trim() : undefined))
+		.optional(),
 	reasons: z.array(reasonSchema),
 });
 
-export type Verdict = z.infer<typeof verdictSchema>;
+/**
+ * A block written before `escalate` existed must still parse: `parseBlock` returns
+ * null for a malformed block, and that would drop the carried findings and the
+ * reviewer-request flag with it.
+ */
+export const storedVerdictSchema = z.strictObject({
+	intent_match: z.boolean(),
+	new_behavior: z.boolean(),
+	escalate: z.boolean().optional().default(false),
+	escalation: z
+		.string()
+		.nullish()
+		.transform((v) => (v?.trim() ? v.trim() : undefined))
+		.optional(),
+	reasons: z.array(reasonSchema),
+});
 
 export type FailureReason =
 	| "missing_key"
@@ -114,7 +161,7 @@ export interface LlmDeps {
 }
 
 /** Bump on any change to DEFAULT_BASE, FORMAT or the message layout; it invalidates cached verdicts. */
-export const PROMPT_VERSION = "7";
+export const PROMPT_VERSION = "8";
 
 const CAPS: Record<string, number> = {
 	body: 3000,
@@ -136,25 +183,47 @@ const FORMAT = `The user message holds the pull request as data. Each field sits
 Every reason must name a defect the author has to fix, and say why it matters. Never report that you checked something and found it clean, never describe what the change does, and never repeat the pull request description. A change with no defects has an empty reasons array.
 Anchor a reason to a line the diff shows: set "path" to the file and "line" to the line number on the new side of the diff. Omit both when the finding is about the change as a whole.
 When the fix for an anchored finding is a complete replacement of that one line, add "suggestion" with the whole new line and no line break: it is offered to the author as code they can apply in one click. Add it only when you are certain the line is right in context, never for a fix that needs more than the one line, and never as a way to say the same thing again.
-Reply with only a JSON object: {"intent_match": boolean, "new_behavior": boolean, "reasons": [{"severity": "blocker" | "concern" | "nit", "text": string, "path"?: string, "line"?: number, "suggestion"?: string}]}
-Output the JSON object only, no prose, no code fence. Omit "path" and "line" when unknown.`;
+`;
+/** Asked for only when the repo lets the model judge the size of the change. */
+const ESCALATE = `Set "escalate" to true when the change as a whole needs a human rather than one more finding: it spans unrelated concerns, rewrites a subsystem, or cannot be verified without context this input does not carry. When you set it, put the concern a human has to check in "escalation": it is shown to the reader as the reason, so name the change rather than repeat a finding. Do not use it to avoid reviewing: if you can review the change, review it and report what is wrong with it.`;
 
-export function buildSystemPrompt({ prompt }: Config): string {
+const REPLY = (escalate: boolean) =>
+	`Reply with only a JSON object: {"intent_match": boolean, "new_behavior": boolean, ${escalate ? '"escalate": boolean, "escalation"?: string, ' : ""}"reasons": [{"severity": "blocker" | "concern" | "nit", "text": string, "path"?: string, "line"?: number, "suggestion"?: string}]}`;
+
+const JSON_RULES =
+	'Output the JSON object only, no prose, no code fence. Omit "path" and "line" when unknown.';
+
+export function buildSystemPrompt({ prompt, size }: Config): string {
 	const guidance = prompt.guidance.map((g, i) => `${i + 1}. ${g}`).join("\n");
-	return [prompt.base ?? DEFAULT_BASE, guidance, FORMAT]
+	// `size: off` means the answer is never read, so asking for it would only add a
+	// field the model can fail closed on for nothing.
+	const judged = size !== "off";
+	return [
+		prompt.base ?? DEFAULT_BASE,
+		guidance,
+		FORMAT,
+		judged ? ESCALATE : undefined,
+		REPLY(judged),
+		JSON_RULES,
+	]
 		.filter(Boolean)
 		.join("\n\n");
 }
 
 /** Cache key component for the verdict cache: changes when the prompt or model does. */
-export function promptHash({ prompt, models }: Config): string {
+export function promptHash({ prompt, models, size }: Config): string {
 	return hashOf([
 		prompt.base ?? DEFAULT_BASE,
 		prompt.guidance,
 		models.review,
 		PROMPT_VERSION,
-		// FORMAT is part of the prompt, so a change to it must invalidate cached verdicts.
+		// The format is part of the prompt, and the size mode decides which part of it
+		// is sent, so a change to either must invalidate cached verdicts.
 		FORMAT,
+		ESCALATE,
+		REPLY(true),
+		REPLY(false),
+		size,
 	]);
 }
 
@@ -345,7 +414,7 @@ export async function review(
 				["diff", input.diff],
 			],
 			model: config.models.review,
-			schema: verdictSchema,
+			schema: config.size === "off" ? unjudgedVerdictSchema : verdictSchema,
 			promptHash: promptHash(config),
 			truncated: input.truncated,
 		},

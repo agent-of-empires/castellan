@@ -1,3 +1,4 @@
+import type { Config } from "./config.js";
 import type { ReviewResult } from "./llm.js";
 import type { Decision, Reason } from "./rules.js";
 
@@ -18,6 +19,7 @@ const model = (rule: string, text: string): Reason => ({ rule, text });
 export function decide(
 	decision: Decision,
 	review?: ReviewResult,
+	size: Config["size"] = "fixed",
 ): Outcome | null {
 	if (decision.outcome === "skip" || decision.outcome === "wait") return null;
 	if (decision.outcome === "escalate") {
@@ -29,8 +31,15 @@ export function decide(
 			reasons: [model("llm_unavailable", "model review unavailable")],
 		};
 	}
-	const { intent_match, new_behavior, reasons } = review.verdict;
+	const { intent_match, new_behavior, escalate, escalation, reasons } =
+		review.verdict;
+	// `size: off` means the repo asked for no size judgement at all, so the model's
+	// answer is not read. `fixed` and `model` both honour it: it can only withhold
+	// a merge.
 	const vetoes = [
+		...(escalate && size !== "off"
+			? [model("llm_escalate", escalation ?? "change needs a human review")]
+			: []),
 		...(intent_match
 			? []
 			: [

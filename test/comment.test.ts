@@ -18,6 +18,7 @@ const review: OkReviewResult = {
 	ok: true,
 	verdict: {
 		intent_match: true,
+		escalate: false,
 		new_behavior: false,
 		reasons: [
 			{ severity: "concern", text: "missing test", path: "src/a.ts" },
@@ -124,7 +125,7 @@ describe("renderComment", () => {
 
 			</details>
 
-			<!-- castellan {"v":1,"verdict":"merge","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"new_behavior":false,"reasons":[{"severity":"concern","text":"missing test","path":"src/a.ts"},{"severity":"nit","text":"naming"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
+			<!-- castellan {"v":1,"verdict":"merge","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"escalate":false,"new_behavior":false,"reasons":[{"severity":"concern","text":"missing test","path":"src/a.ts"},{"severity":"nit","text":"naming"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
 		`);
 	});
 
@@ -289,6 +290,55 @@ describe("renderComment", () => {
 });
 
 // Rendered from the first shadow briefs on agent-of-empires (#5510, #5481, #5444).
+describe("the model's size judgement", () => {
+	const escalated: Brief = {
+		...brief,
+		outcome: {
+			verdict: "escalate",
+			reasons: [{ rule: "llm_escalate", text: "rewrites the scheduler" }],
+		},
+		review: {
+			...review,
+			verdict: {
+				...review.verdict,
+				escalate: true,
+				escalation: "rewrites the scheduler",
+			},
+		},
+	};
+
+	it("is printed when it is what withheld the merge", () => {
+		const body = renderComment(escalated).split("<!-- castellan")[0];
+		expect(body).toContain("- Needs a human: rewrites the scheduler");
+	});
+
+	it("says so when the model escalated without naming a concern", () => {
+		const body = renderComment({
+			...escalated,
+			review: {
+				...escalated.review,
+				verdict: { ...review.verdict, escalate: true },
+			},
+		} as Brief).split("<!-- castellan")[0];
+		expect(body).toContain(
+			"- Needs a human: yes, for a reason the model did not name",
+		);
+	});
+
+	it("stays out of the brief when the mode ignores the answer", () => {
+		// `size: off` merges without reading the judgement, so the brief must not
+		// claim a human is needed.
+		const body = renderComment({
+			...brief,
+			review: {
+				...review,
+				verdict: { ...review.verdict, escalate: true, escalation: "too big" },
+			},
+		}).split("<!-- castellan")[0];
+		expect(body).not.toContain("Needs a human");
+	});
+});
+
 describe("real briefs", () => {
 	const names = (n: string[], conclusion: string) =>
 		n.map((name) => ({ name, conclusion }));
@@ -307,6 +357,7 @@ describe("real briefs", () => {
 		...review,
 		verdict: {
 			intent_match: true,
+			escalate: false,
 			new_behavior: false,
 			reasons: [{ severity: "nit", text: "config could name the labeler" }],
 		},
@@ -369,7 +420,7 @@ describe("real briefs", () => {
 
 			</details>
 
-			<!-- castellan {"v":1,"verdict":"escalate","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"new_behavior":false,"reasons":[{"severity":"nit","text":"config could name the labeler"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
+			<!-- castellan {"v":1,"verdict":"escalate","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"escalate":false,"new_behavior":false,"reasons":[{"severity":"nit","text":"config could name the labeler"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
 		`);
 	});
 

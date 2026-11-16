@@ -8,7 +8,13 @@ const review = (
 	over: Partial<OkReviewResult["verdict"]> = {},
 ): OkReviewResult => ({
 	ok: true,
-	verdict: { intent_match: true, new_behavior: false, reasons: [], ...over },
+	verdict: {
+		intent_match: true,
+		new_behavior: false,
+		escalate: false,
+		reasons: [],
+		...over,
+	},
 	usage: { inputTokens: 1, outputTokens: 1 },
 	costUsd: 0,
 	promptHash: "p",
@@ -55,6 +61,43 @@ describe("decide", () => {
 		const o = decide(candidate, review(over));
 		expect(o?.verdict).toBe("escalate");
 		expect(o?.reasons.length).toBeGreaterThan(0);
+	});
+
+	it("escalates in the model's own words, not a borrowed finding", () => {
+		const o = decide(
+			candidate,
+			review({
+				escalate: true,
+				escalation: "rewrites the scheduler and its queue",
+				reasons: [
+					{ severity: "nit", text: "typo" },
+					// A finding listed first: the reason must not be this text, or the
+					// escalation shows up twice when it is also a blocker.
+					{ severity: "blocker", text: "leaks a handle on every retry" },
+				],
+			}),
+		);
+		expect(o).toEqual({
+			verdict: "escalate",
+			reasons: [
+				{ rule: "llm_escalate", text: "rewrites the scheduler and its queue" },
+				{
+					rule: "llm_blocker",
+					text: "leaks a handle on every retry",
+					path: undefined,
+					line: undefined,
+				},
+			],
+		});
+	});
+
+	it("does not read the model's escalation when sizing is off", () => {
+		const o = decide(
+			candidate,
+			review({ escalate: true, escalation: "too big" }),
+			"off",
+		);
+		expect(o).toEqual({ verdict: "merge", reasons: [] });
 	});
 
 	it("fails closed when the model failed or did not run", () => {

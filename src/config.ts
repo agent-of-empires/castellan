@@ -6,6 +6,13 @@ export const CONFIG_PATH = ".castellan.yml";
 
 const base = z.strictObject({
 	mode: z.enum(["off", "shadow", "enforce"]).default("shadow"),
+	/**
+	 * How a change that is too big is caught. `fixed` keeps the size rules and
+	 * their numbers, which is what a repo had before this key existed; `model`
+	 * drops the numbers and lets the model ask for a human in its own words;
+	 * `off` does neither.
+	 */
+	size: z.enum(["off", "fixed", "model"]).default("fixed"),
 	limits: z
 		.strictObject({
 			maxLines: z.number().int().positive().default(100),
