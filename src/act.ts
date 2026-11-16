@@ -148,11 +148,12 @@ export async function act(
 	const askReviewers = async (b: Brief) => {
 		if (config.mode !== "enforce" || b.outcome.verdict !== "escalate") return;
 		if (b.key.requested === headSha) return;
-		await requestReviewers(transport, repoRef, pullNumber, {
+		const asked = await requestReviewers(transport, repoRef, pullNumber, {
 			...escalationReviewers(b, config),
 			author: snapshot.author,
 		});
-		b.key.requested = headSha;
+		// A failed request is retried on the next event for this head.
+		if (asked) b.key.requested = headSha;
 	};
 	await askReviewers(final);
 

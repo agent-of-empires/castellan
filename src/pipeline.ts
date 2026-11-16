@@ -303,6 +303,11 @@ export async function evaluatePull(
 				!skipModel && !keepCached && !capped && threadChanged
 					? spent + 1
 					: spent,
+			// Read back from the block, like `threadReruns`: a sweep on this head must
+			// still know the reviewers were already asked, even after a human removed
+			// the request.
+			requested:
+				cached?.headSha === head.headSha ? cached.requested : undefined,
 		};
 		const dedup = await getOrRun({
 			cached,
@@ -355,6 +360,7 @@ export async function evaluatePull(
 			ownerTeam: ownedTeam(
 				snapshot.files.map((f) => f.path),
 				codeowners,
+				repoRef.owner,
 			),
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };

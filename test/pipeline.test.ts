@@ -8,6 +8,8 @@ const repo = { owner: "o", repo: "r" };
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
 const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
+const REVIEWERS =
+	"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers";
 const PATCH_COMMENT =
 	"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}";
 
@@ -535,6 +537,19 @@ describe("evaluatePull", () => {
 		vi.spyOn(console, "warn").mockImplementation(() => {});
 		await evaluatePull(w.env, repo, 3);
 		expect(w.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("asking for a reviewer", () => {
+	it("asks once per head, including after the block is read back", async () => {
+		const w = world({
+			yaml: "mode: enforce\nlimits: { maxLines: 1 }\nreviewers: { team: platform }",
+		});
+		await evaluatePull(w.env, repo, 3);
+		// The second run reads its own block back, as a sweep on the same head would.
+		await evaluatePull(w.env, repo, 3);
+		const asked = w.request.mock.calls.filter((c) => c[0] === REVIEWERS);
+		expect(asked).toHaveLength(1);
 	});
 });
 

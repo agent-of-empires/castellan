@@ -106,7 +106,8 @@ function humanChangesRequested(s: Snapshot) {
 	return [...latest].filter(([, state]) => state === "CHANGES_REQUESTED");
 }
 
-const slug = (team: string) => team.replace(/^.*\//, "");
+/** A team slug: `@org/team` or `team` to `team`. */
+export const slug = (team: string) => team.replace(/^.*\//, "");
 
 const SKIP: Record<string, Rule> = {
 	draft: (s) => when(s.draft, "PR is a draft"),
