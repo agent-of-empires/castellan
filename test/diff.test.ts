@@ -61,4 +61,36 @@ describe("rightLines", () => {
 	it("ignores lines before any file header", () => {
 		expect(rightLines("+stray\n context").size).toBe(0);
 	});
+
+	it("reads a +++ line inside a hunk as added text, not a new file", () => {
+		const tricky = [
+			"diff --git a/x.md b/x.md",
+			"--- a/x.md",
+			"+++ b/x.md",
+			"@@ -1,3 +1,4 @@",
+			" one",
+			"+++ b/evil.ts",
+			"+three",
+			" four",
+		].join("\n");
+		const lines = rightLines(tricky);
+		expect(lines.has("evil.ts")).toBe(false);
+		expect([...(lines.get("x.md") ?? [])]).toEqual([1, 2, 3, 4]);
+	});
+
+	it("does not count a trailing newline as a new-side line", () => {
+		const trailing = [
+			"diff --git a/src/a.ts b/src/a.ts",
+			"--- a/src/a.ts",
+			"+++ b/src/a.ts",
+			"@@ -1,2 +1,3 @@",
+			" one",
+			"+two",
+			" three",
+			"",
+		].join("\n");
+		expect([...(rightLines(trailing).get("src/a.ts") ?? [])]).toEqual([
+			1, 2, 3,
+		]);
+	});
 });

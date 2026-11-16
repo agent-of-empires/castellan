@@ -79,6 +79,19 @@ describe("inline findings", () => {
 		expect(body).toContain("**Castellan: escalate**");
 		expect(body).toContain("1. 646 changed lines");
 	});
+
+	it("keeps a rule reason even when a model finding is inline", () => {
+		// `inline` indexes the model's reasons, so it must not filter `outcome.reasons`.
+		const body = renderReviewBody({
+			...brief,
+			inline: [{ index: 0, path: "src/a.ts", line: 1 }],
+			outcome: {
+				verdict: "escalate",
+				reasons: [{ rule: "max_lines", text: "646 changed lines" }],
+			},
+		});
+		expect(body).toContain("1. 646 changed lines");
+	});
 });
 
 describe("renderComment", () => {

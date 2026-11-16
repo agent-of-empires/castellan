@@ -98,6 +98,16 @@ const base = z.strictObject({
 			guidance: z.array(z.string()).default([]),
 		})
 		.prefault({}),
+	review: z
+		.strictObject({
+			inline: z
+				.boolean()
+				.default(false)
+				.describe(
+					"Post the model's anchored findings as inline review comments. Off by default, so an upgrade never starts posting reviews.",
+				),
+		})
+		.prefault({}),
 });
 
 const BEDROCK_ID = /^(anthropic|us|global)\./;

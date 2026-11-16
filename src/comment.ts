@@ -228,16 +228,17 @@ export function renderComment(brief: Brief): string {
  */
 export function renderReviewBody(brief: Brief): string {
 	const { outcome, key, shadow, inline } = brief;
-	const sent = new Set(inline?.map((i) => i.index) ?? []);
+	// `inline` indexes the model's reasons while `outcome.reasons` is a different
+	// list, so the filter matches on text, as `renderComment` does.
+	const sent = inlineTexts(brief);
 	const rest = outcome.reasons
-		.map((r, i) => ({ r, i }))
-		.filter(({ i }) => !sent.has(i))
+		.filter((r) => !sent.has(r.text))
 		.slice(0, MAX_REASONS);
 	const count = inline?.length ?? 0;
 	return [
 		`**Castellan: ${outcome.verdict}** at \`${key.headSha.slice(0, 7)}\`${shadow ? " (shadow)" : ""}`,
 		"",
-		...rest.map(({ r }, i) => `${i + 1}. ${reason(r.text)}${at(r.path)}`),
+		...rest.map((r, i) => `${i + 1}. ${reason(r.text)}${at(r.path)}`),
 		...(rest.length ? [""] : []),
 		...(count
 			? [`${count} finding${count === 1 ? "" : "s"} inline on the diff.`]

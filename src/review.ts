@@ -13,6 +13,7 @@ export interface InlineFinding {
 }
 
 export interface InlineComment {
+	index: number;
 	path: string;
 	line: number;
 	body: string;
@@ -54,11 +55,34 @@ export function inlineComments(
 		if (!r) return [];
 		const prefix = r.severity === "nit" ? "nit: " : "";
 		const text = escapeText(r.text.slice(0, MAX_REASON_CHARS));
-		return [{ path, line, body: `${prefix}${text}` }];
+		return [{ index, path, line, body: `${prefix}${text}` }];
 	});
 }
 
-export type ReviewEvent = "APPROVE" | "COMMENT";
+/**
+ * Anchors castellan already commented on, at any head of this PR. A force push
+ * re-anchors a finding, so the same defect must not be posted twice; the caller
+ * drops the planned comments whose anchor is in this set.
+ */
+export async function postedAnchors(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	pullNumber: number,
+	login: string,
+): Promise<Set<string>> {
+	const comments = await transport.paginate(
+		"GET /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+		{ owner, repo, pull_number: pullNumber, per_page: 100 },
+	);
+	const out = new Set<string>();
+	for (const c of comments) {
+		if (c.user?.login !== login) continue;
+		if (c.path && typeof c.line === "number") out.add(`${c.path}:${c.line}`);
+	}
+	return out;
+}
+
+export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
 
 export interface ReviewOutcome {
 	approved: boolean;
@@ -66,11 +90,12 @@ export interface ReviewOutcome {
 }
 
 /**
- * One review per head. A review that already exists at this head has its body
- * edited in place, because an edit cannot carry comments and re-posting would
- * duplicate them; the previous head's comments are left to go stale, as every
- * force push does. `APPROVE` still needs its own review when the existing one is
- * only a `COMMENT`, since a submitted review's state cannot be changed.
+ * An approval never carries comments: one rejected anchor would fail the whole
+ * call, and its comments would open threads that hold the merge queue. Findings
+ * are posted as their own review, and a re-run on the same head posts only the
+ * comments that are new, since `PUT` cannot add comments to an existing review.
+ * A submitted review's state cannot be changed, so an approval that follows a
+ * `COMMENT` or `REQUEST_CHANGES` at the same head is posted as its own review.
  */
 export async function submitReview(
 	transport: GithubTransport,
@@ -92,29 +117,53 @@ export async function submitReview(
 	const existing = reviews.findLast(
 		(r) => r.user?.login === login && r.commit_id === headSha,
 	);
-	if (existing) {
+	const edit = async () => {
+		if (!existing) return null;
 		const { data } = await transport.request(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
 			{ owner, repo, pull_number: pullNumber, review_id: existing.id, body },
 		);
-		if (event === "APPROVE" && existing.state !== "APPROVED") {
-			const approval = await transport.request(
-				"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-				{
-					owner,
-					repo,
-					pull_number: pullNumber,
-					commit_id: headSha,
-					event: "APPROVE",
-				},
-			);
-			return { approved: true, url: approval.data.html_url };
-		}
 		return {
 			approved: existing.state === "APPROVED",
 			url: data.html_url,
 		};
+	};
+
+	if (event === "APPROVE") {
+		const edited = await edit();
+		if (edited?.approved) return edited;
+		const { data } = await transport.request(
+			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+			{
+				owner,
+				repo,
+				pull_number: pullNumber,
+				commit_id: headSha,
+				event: "APPROVE",
+				body,
+			},
+		);
+		return { approved: true, url: data.html_url };
 	}
+
+	if (comments.length) {
+		const { data } = await transport.request(
+			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+			{
+				owner,
+				repo,
+				pull_number: pullNumber,
+				commit_id: headSha,
+				event,
+				body,
+				comments,
+			},
+		);
+		return { approved: false, url: data.html_url };
+	}
+
+	const edited = await edit();
+	if (edited) return edited;
 	const { data } = await transport.request(
 		"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{
@@ -124,8 +173,7 @@ export async function submitReview(
 			commit_id: headSha,
 			event,
 			body,
-			...(comments.length ? { comments } : {}),
 		},
 	);
-	return { approved: event === "APPROVE", url: data.html_url };
+	return { approved: false, url: data.html_url };
 }

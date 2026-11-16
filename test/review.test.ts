@@ -56,8 +56,13 @@ describe("inlineComments", () => {
 			reasons,
 		);
 		expect(out).toEqual([
-			{ path: "src/a.ts", line: 2, body: "must fix" },
-			{ path: "src/a.ts", line: 3, body: "nit: prefer someone and &lt;b>" },
+			{ index: 0, path: "src/a.ts", line: 2, body: "must fix" },
+			{
+				index: 1,
+				path: "src/a.ts",
+				line: 3,
+				body: "nit: prefer someone and &lt;b>",
+			},
 		]);
 	});
 
@@ -75,7 +80,7 @@ describe("submitReview", () => {
 		body: "body",
 		login: "castellan[bot]",
 	};
-	const comments = [{ path: "src/a.ts", line: 2, body: "fix" }];
+	const comments = [{ index: 0, path: "src/a.ts", line: 2, body: "fix" }];
 
 	const transport = (reviews: unknown[]) => {
 		const request = vi.fn(async () => ({
@@ -109,7 +114,7 @@ describe("submitReview", () => {
 		);
 	});
 
-	it("edits the review already posted at this head instead of duplicating it", async () => {
+	it("posts the new comments as a second review, since PUT cannot add them", async () => {
 		const { request, transport: t } = transport([
 			{
 				id: 9,
@@ -124,10 +129,26 @@ describe("submitReview", () => {
 			comments,
 		});
 		expect(request).toHaveBeenCalledWith(
+			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+			expect.objectContaining({ commit_id: "head1", comments }),
+		);
+		expect(out.approved).toBe(false);
+	});
+
+	it("edits the existing review when there is nothing new to anchor", async () => {
+		const { request, transport: t } = transport([
+			{
+				id: 9,
+				user: { login: "castellan[bot]" },
+				commit_id: "head1",
+				state: "COMMENTED",
+			},
+		]);
+		await submitReview(t, repo, { ...base, event: "COMMENT", comments: [] });
+		expect(request).toHaveBeenCalledWith(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
 			expect.objectContaining({ review_id: 9, body: "body" }),
 		);
-		expect(out.approved).toBe(false);
 	});
 
 	it("ignores another author's review at the same head", async () => {

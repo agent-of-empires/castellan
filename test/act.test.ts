@@ -123,7 +123,7 @@ function fake({
 	const sent = (route: string) =>
 		request.mock.calls
 			.filter((c) => c[0] === route)
-			.map((c) => c[1] as { body?: string });
+			.map((c) => c[1] as { body?: string; comments?: unknown[] });
 	return { transport, request, paginate, graphql, routes, sent };
 }
 
@@ -151,10 +151,10 @@ const run = async (
 describe("inline findings", () => {
 	it("posts a comment review with the anchored finding in shadow", async () => {
 		const { request, sent, result } = await run(
-			"mode: shadow",
+			"mode: shadow\nreview: { inline: true }",
 			{},
 			{
-				brief: modelBrief(),
+				brief: modelBrief("escalate"),
 			},
 		);
 		expect(result).toEqual({ approved: false, queued: false });
@@ -164,7 +164,12 @@ describe("inline findings", () => {
 				event: "COMMENT",
 				commit_id: "head1",
 				comments: [
-					{ path: "src/a.ts", line: 2, body: "the port is not recorded" },
+					{
+						index: 0,
+						path: "src/a.ts",
+						line: 2,
+						body: "the port is not recorded",
+					},
 				],
 			}),
 		);
@@ -174,28 +179,31 @@ describe("inline findings", () => {
 		expect(body).not.toContain("the port is not recorded");
 	});
 
-	it("approves with the findings in enforce", async () => {
+	it("approves alone and keeps a merge verdict's findings in the brief", async () => {
 		const { sent, result } = await run(
-			"mode: enforce",
+			"mode: enforce\nreview: { inline: true }",
 			{},
 			{
 				brief: modelBrief(),
 			},
 		);
 		expect(result).toEqual({ approved: true, queued: true });
-		expect(sent(APPROVE)[0]).toMatchObject({
+		// Inline comments open threads that a conversation-resolution ruleset holds
+		// the auto-merge on, so an approval never carries them.
+		expect(sent(APPROVE).at(-1)).toMatchObject({
 			event: "APPROVE",
 			commit_id: "head1",
-			body: expect.stringContaining("**Castellan: merge** at `head1`"),
-			comments: [expect.objectContaining({ path: "src/a.ts", line: 2 })],
 		});
+		expect(sent(APPROVE).at(-1)?.comments).toBeUndefined();
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
 	});
 
 	it("keeps the findings in the brief when the review cannot be posted", async () => {
 		const { sent } = await run(
-			"mode: shadow",
+			"mode: shadow\nreview: { inline: true }",
 			{ reviewError: new Error("422") },
-			{ brief: modelBrief() },
+			{ brief: modelBrief("escalate") },
 		);
 		const body = sent(COMMENT)[0]?.body ?? "";
 		expect(body).toContain("the port is not recorded");
@@ -203,7 +211,7 @@ describe("inline findings", () => {
 	});
 
 	it("posts no review when nothing could be anchored", async () => {
-		const { routes } = await run("mode: shadow");
+		const { routes } = await run("mode: shadow\nreview: { inline: true }");
 		expect(routes()).not.toContain(APPROVE);
 	});
 });
