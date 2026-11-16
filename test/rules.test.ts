@@ -34,6 +34,8 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	baseSha: "base1",
 	headRef: "fix/thing",
 	headSha: "abc",
+	baseRepoId: 1,
+	headRepoId: 1,
 	linkedIssues: [7],
 	files: [file("src/a.ts")],
 	filesTruncated: false,
@@ -41,6 +43,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	diffTruncated: false,
 	checks: [{ name: "ci", conclusion: "success" }],
 	reviews: [],
+	commits: [{ logins: ["alice"], message: "fix: thing" }],
 	codeRabbit: null,
 	...over,
 });
@@ -618,6 +621,10 @@ ${SIZED}`;
 		body: "Stacked on #1",
 		bodyTruncated: true,
 		diffTruncated: true,
+		// A commit castellan wrote, so the writer is not the judge rule has something to see.
+		commits: [
+			{ logins: ["castellan[bot]"], message: "fix: x\n\ncastellan-fix: 1" },
+		],
 		codeRabbit: "CHANGES_REQUESTED",
 		checks: [
 			{ name: "ci", conclusion: "failure" },
@@ -716,6 +723,7 @@ ${SIZED}`;
 			["diff_truncated", { diffTruncated: false }],
 			["migration", files("pnpm-lock.yaml")],
 			["generated_only", files("src/a.ts")],
+			["castellan_written", { commits: [] }],
 			["human_changes_requested", { reviews: [] }],
 			["body_truncated", { bodyTruncated: false }],
 			["stacked", { body: "" }],

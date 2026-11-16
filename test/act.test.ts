@@ -25,17 +25,22 @@ const load = async (yaml: string): Promise<Config> => {
 	return r.config;
 };
 
-const snapshot = (paths: string[] = ["src/a.ts"], diff = "") =>
+const snapshot = (
+	paths: string[] = ["src/a.ts"],
+	over: Partial<Snapshot> = {},
+) =>
 	({
 		headSha: "head1",
 		author: "alice",
-		diff,
+		reviews: [],
+		commits: [],
 		files: paths.map((path) => ({
 			path,
 			status: "modified",
 			additions: 1,
 			deletions: 0,
 		})),
+		...over,
 	}) as Snapshot;
 
 const ctx: Context = {
@@ -150,7 +155,7 @@ const run = async (
 	const f = fake(w);
 	const result = await act(f.transport, repo, {
 		pullNumber: 3,
-		snapshot: snapshot(over.files, over.diff),
+		snapshot: snapshot(over.files, { diff: over.diff ?? "" }),
 		config: await load(yaml),
 		ctx,
 		brief: over.brief ?? brief(over.verdict),

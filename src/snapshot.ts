@@ -21,6 +21,9 @@ export interface Snapshot {
 	baseSha: string;
 	headRef: string;
 	headSha: string;
+	/** Repo ids from the pull payload; `head` is null for a deleted fork. */
+	baseRepoId: number | null;
+	headRepoId: number | null;
 	/** Issue numbers from Closes/Fixes/Resolves in the full, uncapped body. */
 	linkedIssues: number[];
 	files: {
@@ -42,6 +45,11 @@ export interface Snapshot {
 	}[];
 	/** State and commit only; review bodies are human text and are left out. */
 	reviews: { login: string; state: string; commitId: string }[];
+	/**
+	 * Every commit on the PR, newest last, as the logins GitHub maps and the full
+	 * message. Castellan's own fix commits are recognised by either.
+	 */
+	commits: { logins: string[]; message: string }[];
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
 	codeRabbit: string | null;
 }
@@ -90,7 +98,7 @@ export async function buildSnapshot(
 		throw new Error(`PR #${pullNumber} is not open`);
 	}
 	const headSha = pr.head.sha;
-	const [{ data: diff }, files, reviews, checks] = await Promise.all([
+	const [{ data: diff }, files, reviews, checks, commits] = await Promise.all([
 		transport
 			.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
 				...pull,
@@ -114,6 +122,13 @@ export async function buildSnapshot(
 			ref: headSha,
 			per_page: 100,
 		}),
+		transport.paginate(
+			"GET /repos/{owner}/{repo}/pulls/{pull_number}/commits",
+			{
+				...pull,
+				per_page: 100,
+			},
+		),
 	]);
 	const { data: after } = await getPull();
 	if (after.head.sha !== headSha) {
@@ -145,6 +160,8 @@ export async function buildSnapshot(
 		baseSha: pr.base.sha,
 		headRef: pr.head.ref,
 		headSha,
+		baseRepoId: Number(pr.base.repo?.id ?? 0) || null,
+		headRepoId: Number(pr.head.repo?.id ?? 0) || null,
 		linkedIssues: linkedIssues(fullBody),
 		files: files.slice(0, FILES_CAP).map((f) => ({
 			path: f.filename,
@@ -162,6 +179,12 @@ export async function buildSnapshot(
 			startedAt: c.started_at ? Date.parse(c.started_at) : null,
 		})),
 		reviews: reviewList,
+		commits: commits.map((c) => ({
+			logins: [c.author?.login, c.committer?.login].filter(
+				(l): l is string => !!l,
+			),
+			message: c.commit.message,
+		})),
 		codeRabbit:
 			reviewList.findLast(
 				(r) => r.login === CODERABBIT && r.state !== "COMMENTED",

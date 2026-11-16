@@ -3,6 +3,7 @@
  * hidden state block is always last, and the whole body stays under BODY_LIMIT.
  */
 import { type CacheKey, serializeBlock } from "./cache.js";
+import type { PushedFixes } from "./fix.js";
 import type { FailureReason, OkReviewResult } from "./llm.js";
 import type { RelatedPr } from "./related.js";
 import type { InlineFinding } from "./review.js";
@@ -42,6 +43,8 @@ export interface Brief {
 	ownerTeam?: string;
 	/** Open PRs changing the same files; advisory only, never part of the verdict. */
 	related?: RelatedPr[];
+	/** Fixes this run pushed to the branch, when writing is enabled. */
+	fixes?: PushedFixes;
 }
 
 /** Makes untrusted text inert in a GitHub comment: no mentions, links, URLs, HTML or dashes. */
@@ -211,6 +214,11 @@ export function renderComment(brief: Brief): string {
 					`- Open PRs that share files with this PR: ${brief.related
 						.map((r) => `#${r.number}`)
 						.join(", ")}`,
+				]
+			: []),
+		...(brief.fixes
+			? [
+					`- ${brief.fixes.count} fix${brief.fixes.count === 1 ? "" : "es"} applied and pushed to \`${brief.fixes.sha.slice(0, 7)}\``,
 				]
 			: []),
 		...(brief.inline?.length

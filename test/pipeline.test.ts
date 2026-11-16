@@ -48,6 +48,15 @@ interface World {
 	files?: SnapshotFile[];
 	/** Issue comments, e.g. castellan's own sticky comment. */
 	comments?: { id: number; body: string; user: { login: string } }[];
+	/** Commits on the PR, as the pull commits list returns them. */
+	commits?: object[];
+	/** Reviews on the PR, as the reviews list returns them. */
+	reviews?: object[];
+	/** Repository ids, so a fork can be told apart from the base repo. */
+	headRepoId?: number | null;
+	baseRepoId?: number | null;
+	/** What the model returns, when not the clean verdict. */
+	model?: object;
 }
 
 function world({
@@ -70,6 +79,11 @@ function world({
 		},
 	],
 	comments = [],
+	commits = [],
+	reviews = [],
+	model,
+	headRepoId = 1,
+	baseRepoId = 1,
 }: World = {}) {
 	/** Mutated by a test to move the PR to a new head between runs. */
 	const headState = { head: "head1" };
@@ -87,6 +101,28 @@ function world({
 			}
 			if (route === "GET /repos/{owner}/{repo}/commits/{ref}/status") {
 				return { data: { statuses: [...posted.values()] } };
+			}
+			if (route === "GET /repos/{owner}/{repo}/git/commits/{commit_sha}") {
+				return { data: { tree: { sha: "t0" } } };
+			}
+			if (route === "GET /repos/{owner}/{repo}/git/trees/{tree_sha}") {
+				return {
+					data: {
+						truncated: false,
+						tree: [
+							{ path: "src/a.ts", mode: "100644", type: "blob", sha: "blob0" },
+						],
+					},
+				};
+			}
+			if (route === "GET /repos/{owner}/{repo}/git/blobs/{file_sha}") {
+				return {
+					data: {
+						content: Buffer.from("const a = 1;\nconst b = 3;\n").toString(
+							"base64",
+						),
+					},
+				};
 			}
 			if (route === "GET /repos/{owner}/{repo}") {
 				return { data: { default_branch: "main" } };
@@ -111,8 +147,12 @@ function world({
 						mergeable,
 						node_id: "PR_1",
 						auto_merge: null,
-						base: { ref: "main", sha: "base1" },
-						head: { ref: "feat/x", sha: headState.head },
+						base: { ref: "main", sha: "base1", repo: { id: baseRepoId } },
+						head: {
+							ref: "feat/x",
+							sha: headState.head,
+							repo: { id: headRepoId },
+						},
 					},
 				};
 			}
@@ -138,6 +178,12 @@ function world({
 			return [];
 		}
 		if (route.endsWith("/files")) return files;
+		if (route.endsWith("/pulls/{pull_number}/commits")) {
+			return commits;
+		}
+		if (route.endsWith("/reviews")) {
+			return reviews;
+		}
 		if (route.endsWith("/check-runs")) {
 			return checks;
 		}
@@ -153,14 +199,18 @@ function world({
 		}
 		return [];
 	});
-	const graphql = vi.fn(async () => ({}));
+	const graphql = vi.fn(async (query: string) =>
+		query.includes("createCommitOnBranch")
+			? { createCommitOnBranch: { commit: { oid: "fix1" } } }
+			: ({} as Record<string, unknown>),
+	);
 	const transport = {
 		request,
 		paginate,
 		graphql,
 	} as unknown as GithubTransport;
 	const create = vi.fn(async () => ({
-		content: [{ type: "text", text: JSON.stringify(verdict) }],
+		content: [{ type: "text", text: JSON.stringify(model ?? verdict) }],
 		usage: { input_tokens: 10, output_tokens: 5 },
 	}));
 	const env = {
@@ -300,6 +350,178 @@ describe("evaluatePull", () => {
 		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
 			?.body as string;
 		expect(body).toContain("Model: unavailable");
+	});
+
+	it("applies a suggestion as a commit only when writing is enabled", async () => {
+		const fix = {
+			intent_match: true,
+			new_behavior: false,
+			escalate: false,
+			reasons: [
+				{
+					severity: "blocker",
+					text: "wrong constant",
+					path: "src/a.ts",
+					line: 2,
+					suggestion: "const b = 2;",
+				},
+			],
+		};
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }",
+			model: fix,
+			diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;",
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.fixes).toEqual({ sha: "fix1", count: 1 });
+		expect(w.graphql).toHaveBeenCalledWith(
+			expect.stringContaining("createCommitOnBranch"),
+			expect.objectContaining({
+				input: expect.objectContaining({ expectedHeadOid: "head1" }),
+			}),
+		);
+		// The head this brief describes is gone, so only the comment is updated.
+		expect(w.routes()).not.toContain(APPROVE);
+		expect(r.act).toMatchObject({ skipped: "pushed_fixes" });
+
+		const shadow = world({
+			yaml: "mode: shadow\ntrustedAuthors: [alice]\nfix: { pushes: true }",
+			model: fix,
+			diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;",
+		});
+		await evaluatePull(shadow.env, repo, 3);
+		expect(shadow.routes()).not.toContain(
+			"GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
+		);
+
+		const off = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			model: fix,
+		});
+		await evaluatePull(off.env, repo, 3);
+		expect(off.routes()).not.toContain(
+			"GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
+		);
+	});
+
+	it("never merges a head it wrote without a human approval", async () => {
+		const fix = {
+			intent_match: true,
+			new_behavior: false,
+			escalate: false,
+			reasons: [],
+		};
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			model: fix,
+			commits: [
+				{
+					author: { login: "castellan[bot]" },
+					committer: { login: "castellan[bot]" },
+					commit: { message: "fix: x\n\ncastellan-fix: 1" },
+				},
+			],
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+		expect(r.brief?.outcome.reasons[0]?.rule).toBe("castellan_written");
+		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("merges a head it wrote when a human approved that head", async () => {
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			commits: [
+				{
+					author: { login: "castellan[bot]" },
+					committer: { login: "castellan[bot]" },
+					commit: { message: "fix: x\n\ncastellan-fix: 1" },
+				},
+			],
+			checks: [{ name: "test", conclusion: "success" }],
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+
+		const approved = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			commits: [
+				{
+					author: { login: "castellan[bot]" },
+					committer: { login: "castellan[bot]" },
+					commit: { message: "fix: x\n\ncastellan-fix: 1" },
+				},
+			],
+			reviews: [
+				{ user: { login: "bob" }, state: "APPROVED", commit_id: "head1" },
+			],
+		});
+		const ok = await evaluatePull(approved.env, repo, 3);
+		expect(ok.brief?.outcome.verdict).toBe("merge");
+		expect(approved.routes()).toContain(APPROVE);
+	});
+
+	it("never writes to a fork, a moved head or a dry run", async () => {
+		const fix = {
+			intent_match: true,
+			new_behavior: false,
+			escalate: false,
+			reasons: [
+				{
+					severity: "blocker",
+					text: "wrong constant",
+					path: "src/a.ts",
+					line: 2,
+					suggestion: "const b = 2;",
+				},
+			],
+		};
+		const yaml =
+			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }";
+		const diff =
+			"diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;";
+		const git = "GET /repos/{owner}/{repo}/git/commits/{commit_sha}";
+
+		for (const over of [{ headRepoId: 2 }, { headRepoId: null }]) {
+			const w = world({ yaml, model: fix, diff, ...over });
+			await evaluatePull(w.env, repo, 3);
+			expect(w.routes()).not.toContain(git);
+			expect(w.graphql).not.toHaveBeenCalledWith(
+				expect.stringContaining("createCommitOnBranch"),
+				expect.anything(),
+			);
+		}
+
+		const dry = world({ yaml, model: fix, diff });
+		await evaluatePull(dry.env, repo, 3, { dryRun: true });
+		expect(dry.routes()).not.toContain(git);
+	});
+
+	it("does not repeat a push when the verdict came from the cache", async () => {
+		const yaml =
+			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }";
+		const diff =
+			"diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;";
+		const model = {
+			intent_match: true,
+			new_behavior: false,
+			escalate: false,
+			reasons: [
+				{
+					severity: "blocker",
+					text: "wrong constant",
+					path: "src/a.ts",
+					line: 2,
+					suggestion: "const b = 2;",
+				},
+			],
+		};
+		const w = world({ yaml, model, diff });
+		await evaluatePull(w.env, repo, 3);
+		const git = "GET /repos/{owner}/{repo}/git/commits/{commit_sha}";
+		const before = w.routes().filter((r) => r === git).length;
+		await evaluatePull(w.env, repo, 3);
+		expect(w.routes().filter((r) => r === git).length).toBe(before);
 	});
 
 	it("does not run the model for a protected path escalation", async () => {

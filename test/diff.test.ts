@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addedLines, rightLines } from "../src/diff.js";
+import { rightLines } from "../src/diff.js";
 
 const diff = [
 	"diff --git a/src/a.ts b/src/a.ts",
@@ -79,7 +79,9 @@ describe("rightLines", () => {
 	});
 
 	it("keeps only the added lines, not the context around them", () => {
-		expect([...(addedLines(diff).get("src/a.ts") ?? [])]).toEqual([2, 22]);
+		expect([...(rightLines(diff, true).get("src/a.ts") ?? [])]).toEqual([
+			2, 22,
+		]);
 	});
 
 	it("does not count a trailing newline as a new-side line", () => {
