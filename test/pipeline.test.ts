@@ -15,6 +15,13 @@ const PATCH_COMMENT =
 
 const verdict = { intent_match: true, new_behavior: false, reasons: [] };
 
+type SnapshotFile = {
+	filename: string;
+	status: string;
+	additions: number;
+	deletions: number;
+};
+
 interface World {
 	yaml?: string | null;
 	draft?: boolean;
@@ -32,6 +39,7 @@ interface World {
 	diff?: string;
 	/** CODEOWNERS content; `yaml` stands in for it when unset. */
 	codeowners?: string;
+	files?: SnapshotFile[];
 }
 
 function world({
@@ -45,6 +53,14 @@ function world({
 	stickyBody,
 	diff = "diff --git a/src/a.ts b/src/a.ts",
 	codeowners,
+	files = [
+		{
+			filename: "src/a.ts",
+			status: "modified",
+			additions: 3,
+			deletions: 1,
+		},
+	],
 }: World = {}) {
 	const posted = new Map<string, unknown>();
 	let sticky: string | null = stickyBody ?? null;
@@ -103,16 +119,7 @@ function world({
 		},
 	);
 	const paginate = vi.fn(async (route: string): Promise<unknown[]> => {
-		if (route.endsWith("/files")) {
-			return [
-				{
-					filename: "src/a.ts",
-					status: "modified",
-					additions: 3,
-					deletions: 1,
-				},
-			];
-		}
+		if (route.endsWith("/files")) return files;
 		if (route.endsWith("/check-runs")) {
 			return checks;
 		}
@@ -205,6 +212,17 @@ describe("evaluatePull", () => {
 		const w = world({ codeowners: "src/ @o/platform\n" });
 		const r = await evaluatePull(w.env, repo, 3);
 		expect(r.brief?.ownerTeam).toBe("platform");
+	});
+
+	it("gives the model the changed files as they read at the head", async () => {
+		const w = world();
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent()).toContain("BEGIN files");
+		expect(w.sent()).toContain("===== src/a.ts =====");
+		expect(w.request).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/contents/{path}",
+			expect.objectContaining({ path: "src/a.ts", ref: "head1" }),
+		);
 	});
 
 	it("reads CODEOWNERS at the base branch ref", async () => {
@@ -537,6 +555,72 @@ describe("evaluatePull", () => {
 		vi.spyOn(console, "warn").mockImplementation(() => {});
 		await evaluatePull(w.env, repo, 3);
 		expect(w.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("file context", () => {
+	const CONTENTS = "GET /repos/{owner}/{repo}/contents/{path}";
+
+	it("reads the changed files with the most churn, skipping removed, unchanged and generated ones", async () => {
+		const w = world({
+			// A high line limit keeps the model running, so the file reads happen.
+			yaml: "mode: shadow\nlimits: { maxLines: 5000 }",
+			files: [
+				{
+					filename: "src/tiny.ts",
+					status: "modified",
+					additions: 1,
+					deletions: 0,
+				},
+				{
+					filename: "pnpm-lock.yaml",
+					status: "modified",
+					additions: 900,
+					deletions: 100,
+				},
+				{
+					filename: "src/big.ts",
+					status: "modified",
+					additions: 200,
+					deletions: 100,
+				},
+				{
+					filename: "src/gone.ts",
+					status: "removed",
+					additions: 0,
+					deletions: 400,
+				},
+				{
+					filename: "src/logo.png",
+					status: "modified",
+					additions: 0,
+					deletions: 0,
+				},
+				{
+					filename: "src/small.ts",
+					status: "modified",
+					additions: 3,
+					deletions: 0,
+				},
+			],
+		});
+		await evaluatePull(w.env, repo, 3);
+		const candidates = new Set([
+			"src/tiny.ts",
+			"pnpm-lock.yaml",
+			"src/big.ts",
+			"src/gone.ts",
+			"src/logo.png",
+			"src/small.ts",
+		]);
+		const read = w.request.mock.calls
+			.filter((c) => c[0] === CONTENTS)
+			.map((c) => (c[1] as { path: string }).path)
+			// The config and CODEOWNERS reads share this route.
+			.filter((p) => candidates.has(p));
+		// Removed, binary and lockfile paths never spend an attempt, and the rest go
+		// by churn, so the 6-attempt budget lands on the files with the most change.
+		expect(read).toEqual(["src/big.ts", "src/small.ts", "src/tiny.ts"]);
 	});
 });
 
