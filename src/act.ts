@@ -2,6 +2,7 @@ import { type Brief, renderComment, renderReviewBody } from "./comment.js";
 import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
 import {
+	dismissStaleBlocker,
 	inlineComments,
 	postedAnchors,
 	type ReviewEvent,
@@ -148,6 +149,16 @@ export async function act(
 		inline: drafted && postedInline?.length ? postedInline : undefined,
 	});
 	let review = drafted;
+
+	// No anchored blocker at this head, so an earlier one must not keep the PR
+	// blocked: GitHub would hold the old `REQUEST_CHANGES` until a later review.
+	if (event !== "REQUEST_CHANGES") {
+		await dismissStaleBlocker(transport, repoRef, {
+			pullNumber,
+			headSha,
+			login: author.login,
+		});
+	}
 
 	if (config.mode === "shadow") return { approved: false, queued: false };
 	if (!isMerge) {

@@ -353,7 +353,6 @@ describe("evaluatePull", () => {
 				event: "REQUEST_CHANGES",
 				comments: [
 					{
-						index: 0,
 						path: "src/a.ts",
 						line: 2,
 						body: "no test covers this",

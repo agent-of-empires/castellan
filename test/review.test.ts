@@ -109,7 +109,7 @@ describe("submitReview", () => {
 				commit_id: "head1",
 				event: "COMMENT",
 				body: "body",
-				comments,
+				comments: [{ path: "src/a.ts", line: 2, body: "fix" }],
 			}),
 		);
 	});
@@ -130,12 +130,15 @@ describe("submitReview", () => {
 		});
 		expect(request).toHaveBeenCalledWith(
 			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-			expect.objectContaining({ commit_id: "head1", comments }),
+			expect.objectContaining({
+				commit_id: "head1",
+				comments: [{ path: "src/a.ts", line: 2, body: "fix" }],
+			}),
 		);
 		expect(out.approved).toBe(false);
 	});
 
-	it("edits the existing review when there is nothing new to anchor", async () => {
+	it("does not rewrite a findings review at this head", async () => {
 		const { request, transport: t } = transport([
 			{
 				id: 9,
@@ -144,10 +147,12 @@ describe("submitReview", () => {
 				state: "COMMENTED",
 			},
 		]);
-		await submitReview(t, repo, { ...base, event: "COMMENT", comments: [] });
-		expect(request).toHaveBeenCalledWith(
+		await submitReview(t, repo, { ...base, event: "COMMENT", comments });
+		// `PUT` would overwrite that review's findings summary, so only an
+		// approval at the same head is edited.
+		expect(request).not.toHaveBeenCalledWith(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
-			expect.objectContaining({ review_id: 9, body: "body" }),
+			expect.anything(),
 		);
 	});
 
@@ -182,7 +187,8 @@ describe("submitReview", () => {
 			comments: [],
 		});
 		expect(out.approved).toBe(true);
-		expect(request).toHaveBeenCalledTimes(2);
+		// One call: the approval is posted, and the findings review is left alone.
+		expect(request).toHaveBeenCalledTimes(1);
 		expect(request).toHaveBeenLastCalledWith(
 			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 			expect.objectContaining({ event: "APPROVE", commit_id: "head1" }),
