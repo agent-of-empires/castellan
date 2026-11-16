@@ -28,6 +28,7 @@ const load = async (yaml: string): Promise<Config> => {
 const snapshot = (paths: string[] = ["src/a.ts"]) =>
 	({
 		headSha: "head1",
+		author: "alice",
 		files: paths.map((path) => ({
 			path,
 			status: "modified",
@@ -543,24 +544,48 @@ describe("escalation reviewers", () => {
 			owner: "o",
 			repo: "r",
 			pull_number: 3,
-			reviewers: [],
 			team_reviewers: ["platform"],
 		});
 	});
 
-	it("falls back to reviewers.team and drops the author from reviewers.users", async () => {
+	it("falls back to reviewers.team and drops the PR author from reviewers.users", async () => {
 		const { request } = await run(
-			"mode: enforce\nreviewers:\n  team: maintainers\n  users: ['castellan[bot]', bob]",
+			"mode: enforce\nreviewers:\n  team: maintainers\n  users: [alice, bob]",
 			{},
 			{ verdict: "escalate" },
 		);
 		expect(request).toHaveBeenCalledWith(
 			REVIEWERS,
-			expect.objectContaining({
-				team_reviewers: ["maintainers"],
-				reviewers: ["bob"],
-			}),
+			expect.objectContaining({ team_reviewers: ["maintainers"] }),
 		);
+		// The PR author is the one GitHub rejects, not the App login.
+		expect(request).toHaveBeenCalledWith(
+			REVIEWERS,
+			expect.objectContaining({ reviewers: ["bob"] }),
+		);
+	});
+
+	it("asks once per head and records it in the state block", async () => {
+		const f = fake({});
+		const config = await load("mode: enforce\nreviewers:\n  team: maintainers");
+		const b = brief("escalate");
+		const input = {
+			pullNumber: 3,
+			snapshot: snapshot(),
+			config,
+			ctx,
+			brief: b,
+			author,
+		};
+		await act(f.transport, repo, input);
+		const calls = () => f.routes().filter((r) => r === REVIEWERS).length;
+		expect(calls()).toBe(1);
+		const body = (f.sent(COMMENT).at(-1)?.body ?? "") as string;
+		expect(body).toContain('"requested":"head1"');
+		// The next event on the same head reads that flag and asks nobody again.
+		b.key.requested = "head1";
+		await act(f.transport, repo, input);
+		expect(calls()).toBe(1);
 	});
 
 	it("asks nobody in shadow", async () => {

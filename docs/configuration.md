@@ -132,7 +132,7 @@ reviewers:
   users: [alice]
 ```
 
-In `enforce`, an `escalate` verdict requests a review from the first `@org/team` owner of the last CODEOWNERS rule matching each changed file, in file order, falling back to `reviewers.team`, plus `reviewers.users`. The PR author is never requested, because GitHub rejects that. The team is also named on the verdict line as `Owner team: <slug>`. `shadow` requests nothing. The request is best effort: a failure is logged and the escalation still posts, so a PR is never left without its comment over an assignment error.
+In `enforce`, an `escalate` verdict requests a review from the first `@org/team` owner of the last CODEOWNERS rule matching each changed file, in file order, falling back to `reviewers.team`, plus `reviewers.users`. The PR author is never requested, because GitHub rejects that. The team is also named on the verdict line as `Owner team: <slug>`. `shadow` requests nothing. The request is sent once per head, including on the `review_failed` and `auto_merge_failed` escalations, and the head is recorded in the state block so a sweep or a later event does not ask again, which also respects a request a human removed. The team and the users travel in separate calls, so one invalid login cannot reject the team request. The request is best effort: a failure is logged and the escalation still posts, so a PR is never left without its comment over an assignment error.
 
 ```yaml
 teams:
@@ -353,7 +353,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - Reasons that quote model or PR text are made inert: no `@` mentions, links, URLs, HTML or dashes.
 - Commit status context is `castellan`. In `enforce`, `merge` sets `success` ("castellan: merge") and `escalate` sets `pending` ("castellan: escalated to a human"). In `shadow` it is `success` for both verdicts, because `pending` reads as "waiting for status to be reported", and `pending` ("shadow: waiting for CI") only while CI is unsettled. It is never set to `failure`, so an escalation waits for a human instead of blocking.
 - On an unexpected error after the head SHA is known, the status is set to `pending` ("castellan: internal error"; `success` "shadow: internal error" in `shadow`) so a stale verdict cannot stay.
-- Escalate requests a review from the owner team when [`reviewers`](#reviewers) or CODEOWNERS names one, and assigns nobody else. It never adds reviewers to a PR it is merging.
+- Escalate requests a review from the owner team when [`reviewers`](#reviewers) or CODEOWNERS names one, once per head and also on `review_failed` and `auto_merge_failed`, and assigns nobody else. It never adds reviewers to a PR it is merging.
 
 ### Acting (`enforce`)
 
