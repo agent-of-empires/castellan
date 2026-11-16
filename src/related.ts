@@ -2,7 +2,7 @@ import type { GithubTransport, Repo } from "./github.js";
 
 /** Open PRs named in a brief at most; more than this stops reading like a warning. */
 export const RELATED_LIMIT = 5;
-/** Open PRs looked at per review, newest first. One GraphQL call however many there are. */
+/** Open PRs looked at per review, most recently updated first. One GraphQL call however many there are. */
 export const SCAN_LIMIT = 20;
 
 export interface RelatedPr {
