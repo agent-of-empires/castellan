@@ -1,5 +1,5 @@
 import { type ActResult, act } from "./act.js";
-import { getOrRun, parseBlock } from "./cache.js";
+import { type CacheKey, getOrRun, parseBlock } from "./cache.js";
 import {
 	type CentralResult,
 	type ConfigSource,
@@ -16,6 +16,7 @@ import {
 	type Repo,
 } from "./github.js";
 import { type LlmDeps, promptHash, review } from "./llm.js";
+import { renderPrevious } from "./previous.js";
 import { planInline } from "./review.js";
 import { ownedTeam } from "./reviewers.js";
 import {
@@ -256,6 +257,16 @@ export async function evaluatePull(
 			promptHash: promptHash(config),
 			model: config.models.review,
 		};
+		// What the last review found, so a new push neither loses a finding that
+		// never became a thread nor restates one already fixed. A head whose model
+		// run failed keeps carrying the earlier findings in the block, and a
+		// same-head re-run still sees them, so a thread change cannot drop them.
+		const carried = cached?.llm
+			? { sha: cached.headSha, reasons: cached.llm.verdict.reasons }
+			: cached?.carry;
+		const previous = carried
+			? renderPrevious(carried.reasons, carried.sha)
+			: undefined;
 		const sameHead =
 			!!cached?.llm &&
 			cached.headSha === head.headSha &&
@@ -302,7 +313,7 @@ export async function evaluatePull(
 		// now, so the brief must not claim those were checked. A block written before
 		// `threads` existed keeps its own key, which is what `keepCached` promises.
 		const sawThreads = !skipModel && !keepCached && !capped;
-		const key = {
+		const key: CacheKey = {
 			...head,
 			threads: keepCached || capped ? cached?.threads : threadKey,
 			threadReruns:
@@ -348,6 +359,7 @@ export async function evaluatePull(
 						linkedIssueBody: issue?.body ?? undefined,
 						threads: rendered.text,
 						files: renderFileContext(files),
+						previous,
 					},
 					config,
 					env.llm,
@@ -361,6 +373,11 @@ export async function evaluatePull(
 			},
 		});
 		const result = dedup.source === "skipped" ? undefined : dedup.result;
+		// Write the carried findings forward on a head whose model run failed or was
+		// skipped, so the next head still sees what an earlier review reported.
+		key.carry = result?.ok
+			? { sha: snapshot.headSha, reasons: result.verdict.reasons }
+			: carried;
 		const outcome = decide(decision, result);
 		if (!outcome) return { status: "skipped" };
 		// Only a model finding can be anchored: a rule reason has no line in the diff.
