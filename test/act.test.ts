@@ -10,6 +10,8 @@ const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
 const MERGE = "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge";
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
+const DISMISS =
+	"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals";
 
 const repo = { owner: "o", repo: "r" };
 const author = { login: "castellan[bot]" };
@@ -148,6 +150,61 @@ const run = async (
 	return { ...f, result };
 };
 
+describe("an earlier blocker", () => {
+	const blocker = (over: Record<string, unknown> = {}) => ({
+		id: 5,
+		user: { login: author.login },
+		commit_id: "head0",
+		state: "CHANGES_REQUESTED",
+		...over,
+	});
+
+	it("is dismissed when a later head reports none", async () => {
+		const { request } = await run("mode: enforce", {
+			reviews: [blocker()],
+		});
+		expect(request).toHaveBeenCalledWith(
+			DISMISS,
+			expect.objectContaining({ review_id: 5 }),
+		);
+	});
+
+	it("is dismissed in shadow too, where nothing replaces it", async () => {
+		const { request } = await run("mode: shadow", { reviews: [blocker()] });
+		expect(request).toHaveBeenCalledWith(
+			DISMISS,
+			expect.objectContaining({ review_id: 5 }),
+		);
+	});
+
+	it("stands while this head still has a blocker", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{ reviews: [blocker()] },
+			{ brief: b },
+		);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+	});
+
+	it("is ignored when it belongs to another reviewer or is an approval", async () => {
+		const other = await run("mode: enforce", {
+			reviews: [blocker({ user: { login: "someone" } })],
+		});
+		expect(other.request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+
+		const approval = await run("mode: enforce", {
+			reviews: [blocker({ state: "APPROVED" })],
+		});
+		expect(approval.request).not.toHaveBeenCalledWith(
+			DISMISS,
+			expect.anything(),
+		);
+	});
+});
+
 describe("inline findings", () => {
 	it("posts a comment review with the anchored finding in shadow", async () => {
 		const { request, sent, result } = await run(
@@ -163,9 +220,9 @@ describe("inline findings", () => {
 			expect.objectContaining({
 				event: "COMMENT",
 				commit_id: "head1",
+				// `index` is castellan's own bookkeeping and is not a review field.
 				comments: [
 					{
-						index: 0,
 						path: "src/a.ts",
 						line: 2,
 						body: "the port is not recorded",

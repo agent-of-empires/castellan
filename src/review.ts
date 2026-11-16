@@ -117,8 +117,10 @@ export async function submitReview(
 	const existing = reviews.findLast(
 		(r) => r.user?.login === login && r.commit_id === headSha,
 	);
+	// `PUT` rewrites the body of an existing review, so it may only touch one that
+	// already approves: a findings review's summary is not this run's to overwrite.
 	const edit = async () => {
-		if (!existing) return null;
+		if (existing?.state !== "APPROVED") return null;
 		const { data } = await transport.request(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
 			{ owner, repo, pull_number: pullNumber, review_id: existing.id, body },
@@ -146,24 +148,8 @@ export async function submitReview(
 		return { approved: true, url: data.html_url };
 	}
 
-	if (comments.length) {
-		const { data } = await transport.request(
-			"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-			{
-				owner,
-				repo,
-				pull_number: pullNumber,
-				commit_id: headSha,
-				event,
-				body,
-				comments,
-			},
-		);
-		return { approved: false, url: data.html_url };
-	}
-
-	const edited = await edit();
-	if (edited) return edited;
+	// The caller only posts a `COMMENT` or `REQUEST_CHANGES` review when it has
+	// comments, and `index` is castellan's own bookkeeping, not a review field.
 	const { data } = await transport.request(
 		"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{
@@ -173,7 +159,48 @@ export async function submitReview(
 			commit_id: headSha,
 			event,
 			body,
+			comments: comments.map(({ path, line, body }) => ({ path, line, body })),
 		},
 	);
 	return { approved: false, url: data.html_url };
+}
+
+/**
+ * GitHub keeps a reviewer's latest state, so a blocker castellan posted on an
+ * earlier head would hold a PR whose finding is gone: a later head that clears
+ * the blocker without reaching `merge` posts nothing that would replace it.
+ * Dismissing that review lifts it; a failed dismissal is logged, never fatal.
+ */
+export async function dismissStaleBlocker(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	opts: { pullNumber: number; headSha: string; login: string },
+): Promise<boolean> {
+	const { pullNumber, headSha, login } = opts;
+	const reviews = await transport.paginate(
+		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+		{ owner, repo, pull_number: pullNumber, per_page: 100 },
+	);
+	const last = reviews.filter((r) => r.user?.login === login).at(-1);
+	if (last?.state !== "CHANGES_REQUESTED" || last.commit_id === headSha)
+		return false;
+	try {
+		await transport.request(
+			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals",
+			{
+				owner,
+				repo,
+				pull_number: pullNumber,
+				review_id: last.id,
+				message:
+					"The blocker this review named is no longer reported at the current head.",
+			},
+		);
+		return true;
+	} catch (err) {
+		console.error("blocker dismissal failed", {
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return false;
+	}
 }
