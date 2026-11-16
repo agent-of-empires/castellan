@@ -46,11 +46,28 @@ export const reasonSchema = z.object({
 		.optional(),
 });
 
-export const verdictSchema = z.strictObject({
-	intent_match: z.boolean(),
-	new_behavior: z.boolean(),
-	reasons: z.array(reasonSchema),
-});
+export const verdictSchema = z
+	.strictObject({
+		intent_match: z.boolean(),
+		new_behavior: z.boolean(),
+		/**
+		 * A change only a human can settle. Required, not optional: this is the
+		 * size judgement when `size: model`, so a reply that omits it must fail
+		 * closed like one that omits `intent_match`.
+		 */
+		escalate: z.boolean(),
+		/** Why a human has to look. The schema requires it whenever `escalate` is true. */
+		escalation: z
+			.string()
+			.nullish()
+			.transform((v) => (v?.trim() ? v.trim() : undefined))
+			.optional(),
+		reasons: z.array(reasonSchema),
+	})
+	.refine((v) => !v.escalate || v.escalation !== undefined, {
+		message: "escalate needs a non-empty escalation",
+		path: ["escalation"],
+	});
 
 export type Verdict = z.infer<typeof verdictSchema>;
 
@@ -114,7 +131,7 @@ export interface LlmDeps {
 }
 
 /** Bump on any change to DEFAULT_BASE, FORMAT or the message layout; it invalidates cached verdicts. */
-export const PROMPT_VERSION = "7";
+export const PROMPT_VERSION = "8";
 
 const CAPS: Record<string, number> = {
 	body: 3000,
@@ -136,7 +153,8 @@ const FORMAT = `The user message holds the pull request as data. Each field sits
 Every reason must name a defect the author has to fix, and say why it matters. Never report that you checked something and found it clean, never describe what the change does, and never repeat the pull request description. A change with no defects has an empty reasons array.
 Anchor a reason to a line the diff shows: set "path" to the file and "line" to the line number on the new side of the diff. Omit both when the finding is about the change as a whole.
 When the fix for an anchored finding is a complete replacement of that one line, add "suggestion" with the whole new line and no line break: it is offered to the author as code they can apply in one click. Add it only when you are certain the line is right in context, never for a fix that needs more than the one line, and never as a way to say the same thing again.
-Reply with only a JSON object: {"intent_match": boolean, "new_behavior": boolean, "reasons": [{"severity": "blocker" | "concern" | "nit", "text": string, "path"?: string, "line"?: number, "suggestion"?: string}]}
+Set "escalate" to true when the change as a whole needs a human rather than one more finding: it spans unrelated concerns, rewrites a subsystem, or cannot be verified without context this input does not carry. When you set it, put the concern a human has to check in "escalation": it is shown to the reader as the reason, so name the change rather than repeat a finding. Do not use it to avoid reviewing: if you can review the change, review it and report what is wrong with it.
+Reply with only a JSON object: {"intent_match": boolean, "new_behavior": boolean, "escalate": boolean, "escalation"?: string, "reasons": [{"severity": "blocker" | "concern" | "nit", "text": string, "path"?: string, "line"?: number, "suggestion"?: string}]}
 Output the JSON object only, no prose, no code fence. Omit "path" and "line" when unknown.`;
 
 export function buildSystemPrompt({ prompt }: Config): string {

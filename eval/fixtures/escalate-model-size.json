@@ -1,0 +1,64 @@
+{
+	"name": "fixture/escalate-model-size",
+	"config": "size: model\ntrustedAuthors: [alice]",
+	"snapshot": {
+		"title": "refactor: rewrite the scheduler loop",
+		"body": "Refs #12",
+		"bodyTruncated": false,
+		"author": "alice",
+		"authorClass": "trusted",
+		"draft": false,
+		"baseRef": "main",
+		"baseSha": "base1",
+		"headRef": "refactor/scheduler",
+		"headSha": "abc123",
+		"linkedIssues": [12],
+		"files": [
+			{
+				"path": "src/scheduler.ts",
+				"status": "modified",
+				"additions": 260,
+				"deletions": 180
+			}
+		],
+		"filesTruncated": false,
+		"diff": "diff --git a/src/scheduler.ts b/src/scheduler.ts\n",
+		"diffTruncated": false,
+		"checks": [
+			{
+				"name": "check",
+				"conclusion": "success"
+			}
+		],
+		"reviews": [],
+		"codeRabbit": null
+	},
+	"context": {
+		"defaultBranch": "main",
+		"codeowners": [],
+		"bugIssues": []
+	},
+	"requiredChecks": ["check"],
+	"review": {
+		"ok": true,
+		"verdict": {
+			"intent_match": true,
+			"new_behavior": false,
+			"escalate": true,
+			"escalation": "rewrites the scheduler and its queue in one change",
+			"reasons": []
+		},
+		"usage": {
+			"inputTokens": 1,
+			"outputTokens": 1
+		},
+		"costUsd": 0,
+		"promptHash": "p"
+	},
+	"outcome": {
+		"kind": "changes_requested",
+		"mergedAt": "2026-01-10T12:00:00Z",
+		"ciGreenAt": "2026-01-10T10:00:00Z",
+		"humanReviews": 1
+	}
+}

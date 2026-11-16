@@ -18,6 +18,7 @@ const review: OkReviewResult = {
 	ok: true,
 	verdict: {
 		intent_match: true,
+		escalate: false,
 		new_behavior: false,
 		reasons: [
 			{ severity: "concern", text: "missing test", path: "src/a.ts" },
@@ -124,7 +125,7 @@ describe("renderComment", () => {
 
 			</details>
 
-			<!-- castellan {"v":1,"verdict":"merge","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"new_behavior":false,"reasons":[{"severity":"concern","text":"missing test","path":"src/a.ts"},{"severity":"nit","text":"naming"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
+			<!-- castellan {"v":1,"verdict":"merge","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"escalate":false,"new_behavior":false,"reasons":[{"severity":"concern","text":"missing test","path":"src/a.ts"},{"severity":"nit","text":"naming"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
 		`);
 	});
 
@@ -307,6 +308,7 @@ describe("real briefs", () => {
 		...review,
 		verdict: {
 			intent_match: true,
+			escalate: false,
 			new_behavior: false,
 			reasons: [{ severity: "nit", text: "config could name the labeler" }],
 		},
@@ -369,7 +371,7 @@ describe("real briefs", () => {
 
 			</details>
 
-			<!-- castellan {"v":1,"verdict":"escalate","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"new_behavior":false,"reasons":[{"severity":"nit","text":"config could name the labeler"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
+			<!-- castellan {"v":1,"verdict":"escalate","headSha":"abcdef1234567","promptHash":"0123456789abcdef","model":"m1","llm":{"ok":true,"verdict":{"intent_match":true,"escalate":false,"new_behavior":false,"reasons":[{"severity":"nit","text":"config could name the labeler"}]},"usage":{"inputTokens":100,"outputTokens":20},"costUsd":0.0123}} -->"
 		`);
 	});
 

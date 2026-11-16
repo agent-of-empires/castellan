@@ -61,7 +61,7 @@ export async function replay(cases: EvalCase[]): Promise<Result[]> {
 				c.requiredChecks,
 				c.context,
 			);
-			const outcome = decide(decision, c.review);
+			const outcome = decide(decision, c.review, loaded.config.size);
 			return { case: c, verdict: outcome?.verdict ?? "skip" };
 		}),
 	);

@@ -43,6 +43,7 @@
 		"verdict": {
 			"intent_match": false,
 			"new_behavior": true,
+			"escalate": false,
 			"reasons": [
 				{
 					"severity": "blocker",

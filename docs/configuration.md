@@ -68,23 +68,40 @@ The GitHub Action input `mode` and the CLI `--mode` flag override this key. `--m
 mode: shadow
 ```
 
+### `size`
+
+How a change that is too big is caught. `fixed` is the default, so a repo that upgrades keeps the gate it already had: the counts are 100 lines, 5 files and 2 top-level dirs unless `limits` says otherwise.
+
+| Value             | Behaviour                                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fixed` (default) | The `max_lines`, `max_files` and `max_dirs` rules escalate over `limits.maxLines`, `limits.maxFiles` and `limits.maxTopLevelDirs`.               |
+| `model`           | No count escalates. The model judges whether the change is too large or too cross-cutting for one review, and asks for a human in its own words. |
+| `off`             | No size rule and no model judgement: the model's `escalate` answer is ignored.                                                                   |
+
+In every mode, a diff over 30,000 characters (`diff_truncated`) and a file list over 200 files (`max_files`) still escalate: those are the snapshot's own caps, so castellan would otherwise review part of the change and call that a merge.
+
+```yaml
+size: model
+```
+
 ### `limits`
 
-A PR over any limit escalates. All are positive integers.
+The counts `size: fixed` compares against, and the staleness window for checks. All values are positive integers.
 
-| Key                        | Default | Counts                                                                                                       |
-| -------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `limits.maxLines`          | `100`   | additions plus deletions across all files                                                                    |
-| `limits.maxFiles`          | `5`     | changed files. More than 200 files (the snapshot cap) always counts as over                                  |
-| `limits.maxTopLevelDirs`   | `2`     | distinct first path segments; files at the repo root count as one extra "directory"                          |
-| `limits.staleCheckMinutes` | `60`    | minutes a check run may stay queued or in progress, counted from `started_at`, before it is stale (see Wait) |
+| Key                        | Default | Counts                                                                                                               |
+| -------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `limits.maxLines`          | `100`   | additions plus deletions across all files. Read only in `size: fixed`                                                |
+| `limits.maxFiles`          | `5`     | changed files. Read only in `size: fixed`; more than 200 files always escalates, since the snapshot cannot hold them |
+| `limits.maxTopLevelDirs`   | `2`     | distinct first path segments; files at the repo root count as one extra "directory". Read only in `size: fixed`      |
+| `limits.staleCheckMinutes` | `60`    | minutes a check run may stay queued or in progress, counted from `started_at`, before it is stale (see Wait)         |
 
 ```yaml
 limits:
-  maxLines: 200
-  maxFiles: 8
-  maxTopLevelDirs: 3
   staleCheckMinutes: 90
+  # A hard cap in lines, files and top-level dirs, for size: fixed.
+  maxLines: 800
+  maxFiles: 20
+  maxTopLevelDirs: 4
 ```
 
 ### `paths`
@@ -277,8 +294,7 @@ review:
 
 ```yaml
 mode: shadow
-limits:
-  { maxLines: 100, maxFiles: 5, maxTopLevelDirs: 2, staleCheckMinutes: 60 }
+limits: { staleCheckMinutes: 60 }
 paths:
   protected: ["src/auth/"]
   release: ["Cargo.toml"]
@@ -319,7 +335,7 @@ The `castellan` commit status is posted only when its state, description or targ
 | `required_check`                     | a check required by the active rulesets for the base branch did not end in success, neutral or skipped (as on GitHub)                                                                                     |
 | `check_failing`                      | a check run on the head SHA has any conclusion other than success, neutral or skipped                                                                                                                     |
 | `coderabbit`                         | the latest non-comment review by `coderabbitai[bot]` requests changes                                                                                                                                     |
-| `max_lines`, `max_files`, `max_dirs` | over `limits.*`                                                                                                                                                                                           |
+| `max_lines`, `max_files`, `max_dirs` | over the matching `limits.*`, read in `size: fixed` (the default)                                                                                                                                         |
 | `diff_truncated`                     | the diff is over 30,000 characters                                                                                                                                                                        |
 | `migration`                          | a path matches `paths.migrations`                                                                                                                                                                         |
 | `generated_only`                     | every changed file is a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`), a `*.generated.*` file or under `dist/` or `generated/`                                              |
@@ -330,7 +346,7 @@ The `castellan` commit status is posted only when its state, description or targ
 
 Required checks come from the rulesets API only; classic branch protection is not read. Checks are every check run on the head SHA, not only the required ones. Commit statuses (not check runs) are not evaluated.
 
-**Model.** A PR that passed every rule is reviewed, and so is one whose only escalation reasons are the size limits (`max_lines`, `max_files`, `max_dirs`, `diff_truncated`) and whose every other escalate rule is clean: "too big to merge" is not a review, and the human who reads the escalation gets the findings too. The verdict stays `escalate`, and the review is marked advisory in the brief. Every other escalation skips the model, because its reason is already the decision. The model returns `intent_match`, `new_behavior` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block. With [`review.inline`](#review) on, a finding that also names a `path` and a `line` the diff shows is posted as an inline review comment on that line instead, at most 10 per review, with a `nit` prefixed `nit:`; the brief then only counts those. A finding may also carry a `suggestion`: the complete replacement for that one line, posted as a `suggestion` block that anyone with write access to the head branch can apply with one click. Castellan never writes to the branch itself, so a suggestion is a proposal in a comment. A suggestion is dropped, and the finding still posts as text, when it is not one visible line: more than 300 characters, a code fence, a comment opener, a line break, or any control, format or line-separator character other than tab (so a bare CR, a bidi override, a zero width character or U+2028 is refused rather than stripped). A finding without both stays in the brief, a finding already posted on that path and line is not posted again, and if the review cannot be posted at all its findings stay in the brief too. When the snapshot itself cut the diff or the file list, the model is told which fields it is reading only part of.
+**Model.** A PR that passed every rule is reviewed, and so is one whose only escalation reasons are the size limits (`max_lines`, `max_files`, `max_dirs`, `diff_truncated`) and whose every other escalate rule is clean: "too big to merge" is not a review, and the human who reads the escalation gets the findings too. The verdict stays `escalate`, and the review is marked advisory in the brief. Every other escalation skips the model, because its reason is already the decision. The model returns `intent_match`, `new_behavior`, `escalate`, `escalation` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. `escalate` is how the model asks for a human on judgement rather than on a number: the change spans unrelated concerns, rewrites a subsystem, or cannot be verified from what the input carries. Both fields are required, and `escalation` must say what a human has to check, so a reply that omits either is `invalid_output` and fails closed like a reply that omits `intent_match`. The concern becomes the `llm_escalate` reason in the model's own words, never a finding borrowed from the list, so it cannot show up twice when that finding is also a blocker and cannot vanish when the finding was posted inline. It can only withhold a `merge`, never grant one, the prompt tells the model not to use it to avoid reviewing, and it is ignored in `size: off`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block. With [`review.inline`](#review) on, a finding that also names a `path` and a `line` the diff shows is posted as an inline review comment on that line instead, at most 10 per review, with a `nit` prefixed `nit:`; the brief then only counts those. A finding may also carry a `suggestion`: the complete replacement for that one line, posted as a `suggestion` block that anyone with write access to the head branch can apply with one click. Castellan never writes to the branch itself, so a suggestion is a proposal in a comment. A suggestion is dropped, and the finding still posts as text, when it is not one visible line: more than 300 characters, a code fence, a comment opener, a line break, or any control, format or line-separator character other than tab (so a bare CR, a bidi override, a zero width character or U+2028 is refused rather than stripped). A finding without both stays in the brief, a finding already posted on that path and line is not posted again, and if the review cannot be posted at all its findings stay in the brief too. When the snapshot itself cut the diff or the file list, the model is told which fields it is reading only part of.
 
 ### Author classes
 
@@ -369,7 +385,7 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 
 ### Snapshot and model limits
 
-- PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates. `limits.maxLines` defaults to 100 and is the rule most likely to fire on a real repository: raise it (with `maxFiles` and `maxTopLevelDirs`) to what the repo actually merges, since a size escalation now costs a model call and yields findings the reader did not get before.
+- PR body 3,000 characters, diff 30,000 characters, 200 files. Over any of these, the item is truncated and the matching rule escalates. These are the snapshot's caps, not a size policy: a diff escalation still reaches the model as advice (see Model). In `size: fixed` the `limits` counts name the size most likely to fire on a real repository: set them to what the repo actually merges, since a size escalation now costs a model call and yields findings the reader did not get before. `size: model` drops the counts instead, and `size: off` drops both.
 - Labels, issue comments and review bodies are never fetched. Of the PR's review threads, the first comment of each unresolved one is fetched (GraphQL `reviewThreads`), newest first. A failed read is not "no threads": castellan keeps the verdict that head already has, or escalates, and never reviews without the threads it expected. Castellan's own comments are dropped, including the `[bot]` suffix difference between the REST and GraphQL logins.
 - The changed files are read as they are at the head, not the base: the post-image is what would merge. Removed files, generated files and paths with no changed lines (binary or pure rename) are skipped without a request, and paths are ordered by changed lines. At most 6 reads are attempted, 12,000 characters each within a 36,000 character field that includes the `===== path =====` headers. A 404 is skipped; any other failure throws so the run fails closed and the next delivery retries. A file cut short says `(truncated)`, and the model is told that absent files are not evidence of anything.
 - Re-review continuity: the block keeps the findings a head's review reported as its own `carry` field, so the next head gets up to 6 of them back as `previousFindings` (8,000 characters, 900 each), with the head they were made at. A head whose model run failed or was skipped writes the earlier findings forward, so they are not lost, and a re-run on the same head still sees them. The prompt calls them an earlier automated review and says they can be wrong.

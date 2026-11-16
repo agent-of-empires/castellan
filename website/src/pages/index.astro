@@ -41,8 +41,8 @@ prompt:
 	<p>Castellan re-evaluates a PR from scratch on every event and posts one brief with a verdict.</p>
 	<ol>
 		<li><strong>Skip.</strong> Drafts, dependabot, non-default bases, skipped branches and <code>mode: off</code> are not evaluated.</li>
-		<li><strong>Rules.</strong> Protected or release paths, migrations, failing or missing checks, CodeRabbit changes requested and size limits escalate to a human.</li>
-		<li><strong>Model review.</strong> Only a PR that passed every rule is reviewed. The model can turn a candidate into <code>escalate</code>; a failed review also escalates.</li>
+		<li><strong>Rules.</strong> Protected or release paths, migrations, failing or missing checks, CodeRabbit changes requested and, by default, the size limits escalate to a human. With <code>size: model</code> the model asks for a human on judgement instead, and <code>size: off</code> drops both.</li>
+		<li><strong>Model review.</strong> Only a PR that passed every rule is reviewed. The model can turn a candidate into <code>escalate</code>, in its own words; a failed review also escalates.</li>
 		<li><strong>Act.</strong> <code>shadow</code> posts the brief and a <code>castellan</code> status. <code>enforce</code> also approves the head SHA and enables squash auto-merge, only for <code>merge</code>.</li>
 	</ol>
 	<p>

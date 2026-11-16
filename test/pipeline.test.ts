@@ -14,7 +14,12 @@ const REVIEWERS =
 const PATCH_COMMENT =
 	"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}";
 
-const verdict = { intent_match: true, new_behavior: false, reasons: [] };
+const verdict = {
+	intent_match: true,
+	new_behavior: false,
+	escalate: false,
+	reasons: [],
+};
 
 type SnapshotFile = {
 	filename: string;
@@ -219,6 +224,41 @@ describe("evaluatePull", () => {
 		expect(r.brief?.review?.ok).toBe(true);
 	});
 
+	it("merges a change in `size: model` when the model has no veto", async () => {
+		const w = world({
+			yaml: "mode: enforce\nsize: model\ntrustedAuthors: [alice]",
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("merge");
+		expect(w.routes()).toContain(APPROVE);
+	});
+
+	it("escalates in `size: model` when the model asks for a human", async () => {
+		const w = world({
+			yaml: "mode: enforce\nsize: model\ntrustedAuthors: [alice]",
+		});
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						...verdict,
+						escalate: true,
+						escalation: "rewrites the scheduler and its queue",
+					}),
+				},
+			],
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+		expect(r.brief?.outcome.reasons).toContainEqual({
+			rule: "llm_escalate",
+			text: "rewrites the scheduler and its queue",
+		});
+		expect(w.routes()).not.toContain(APPROVE);
+	});
+
 	it("does not run the model when an oversized PR also breaks another rule", async () => {
 		// The size rule fires first, but an external author still escalates, and the
 		// gate must look at every rule rather than the first hit.
@@ -289,6 +329,7 @@ describe("evaluatePull", () => {
 							ok: true,
 							verdict: {
 								intent_match: true,
+								escalate: false,
 								new_behavior: false,
 								reasons: [
 									{ severity: "concern", text: "the retry cap is gone" },
@@ -391,6 +432,7 @@ describe("evaluatePull", () => {
 					type: "text",
 					text: JSON.stringify({
 						intent_match: true,
+						escalate: false,
 						new_behavior: false,
 						reasons: [{ severity: "concern", text: "the retry cap is gone" }],
 					}),
@@ -559,6 +601,7 @@ describe("evaluatePull", () => {
 					text: JSON.stringify({
 						intent_match: false,
 						new_behavior: true,
+						escalate: false,
 						reasons: [{ severity: "blocker", text: "bad" }],
 					}),
 				},
@@ -604,6 +647,7 @@ describe("evaluatePull", () => {
 					type: "text",
 					text: JSON.stringify({
 						intent_match: true,
+						escalate: false,
 						new_behavior: false,
 						reasons: [
 							{
