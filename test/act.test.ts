@@ -65,6 +65,7 @@ const modelBrief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 		ok: true,
 		verdict: {
 			intent_match: true,
+			escalate: false,
 			new_behavior: false,
 			reasons: [
 				{

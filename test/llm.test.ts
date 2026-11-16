@@ -29,6 +29,7 @@ async function cfg(yaml = "") {
 
 const good = {
 	intent_match: true,
+	escalate: false,
 	new_behavior: false,
 	reasons: [{ severity: "nit", text: "typo", path: "a.ts" }],
 };
@@ -236,6 +237,20 @@ describe("review", () => {
 		[
 			"bad severity",
 			JSON.stringify({ ...good, reasons: [{ severity: "x", text: "t" }] }),
+		],
+		// The size judgement in `size: model`, so a reply without it is not "not too big".
+		[
+			"no escalated answer",
+			JSON.stringify({
+				intent_match: true,
+				new_behavior: false,
+				reasons: [],
+			}),
+		],
+		["escalated with no concern", JSON.stringify({ ...good, escalate: true })],
+		[
+			"escalated with a blank concern",
+			JSON.stringify({ ...good, escalate: true, escalation: "   " }),
 		],
 	])("fails closed with invalid_output on %s", async (_n, text) => {
 		const { client } = fake(text);

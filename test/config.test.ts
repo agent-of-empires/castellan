@@ -27,6 +27,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 			ok: true,
 			config: {
 				mode: "enforce",
+				size: "fixed",
 				limits: { maxLines: 50 },
 				trustedAuthors: ["klubrake"],
 				skip_branches: ["wip/*"],
@@ -44,7 +45,7 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 			ok: true,
 			config: {
 				mode: "shadow",
-				limits: { maxLines: 100, maxFiles: 2, maxTopLevelDirs: 2 },
+				limits: { maxFiles: 2, staleCheckMinutes: 60 },
 				project: { name: "Agent of Empires", roadmapField: "Roadmap state" },
 				triage: {
 					priority_labels: ["P0", "P1", "P2", "P3"],
@@ -54,6 +55,16 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 				trustedAuthors: ["a"],
 				skip_branches: ["release-staging/*", "release-plz-*"],
 			},
+		});
+	});
+
+	it("takes the three size modes and nothing else", async () => {
+		for (const size of ["off", "fixed", "model"]) {
+			const r = await loadConfig("main", reader(`size: ${size}`));
+			expect(r).toMatchObject({ ok: true, config: { size } });
+		}
+		expect(await loadConfig("main", reader("size: huge"))).toMatchObject({
+			ok: false,
 		});
 	});
 

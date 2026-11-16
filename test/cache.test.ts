@@ -11,6 +11,7 @@ const ok: Extract<ReviewResult, { ok: true }> = {
 	ok: true,
 	verdict: {
 		intent_match: true,
+		escalate: false,
 		new_behavior: false,
 		reasons: [{ severity: "nit", text: "a --> b <!-- c", path: "src/a.ts" }],
 	},

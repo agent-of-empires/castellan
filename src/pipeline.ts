@@ -410,7 +410,7 @@ export async function evaluatePull(
 		// was skipped: an ok run already publishes its reasons in `llm`, which the
 		// next run reads first, so a second copy would only grow the block.
 		key.carry = result?.ok ? undefined : carried;
-		const outcome = decide(decision, result);
+		const outcome = decide(decision, result, config.size);
 		if (!outcome) return { status: "skipped" };
 		// Only a model finding can be anchored: a rule reason has no line in the diff.
 		const inline = result?.ok

@@ -77,11 +77,16 @@ function modelIntro(brief: Brief): string[] {
 				: "Model: not run (rules decided)",
 		];
 	}
-	const { intent_match, new_behavior } = review.verdict;
+	const { intent_match, new_behavior, escalate, escalation } = review.verdict;
 	return [
 		`### Model review${rulesDecided(brief) ? " (advisory, rules decided the verdict)" : ""}`,
 		`- Matches the linked issue and description: ${yesNo(intent_match)}`,
 		`- Adds behavior beyond the request: ${yesNo(new_behavior)}`,
+		...(escalate
+			? [
+					`- Needs a human: ${escapeText(escalation ?? "yes, for a reason the model did not name")}`,
+				]
+			: []),
 	];
 }
 

@@ -21,6 +21,7 @@ const fixtures: EvalCase[] = readdirSync(DIR)
 
 const NAMED = [
 	"escalate-external-feat",
+	"escalate-model-size",
 	"escalate-failing-check",
 	"escalate-protected-path",
 	"merge-clean",
@@ -43,6 +44,7 @@ describe("fixtures", () => {
 		).toMatchObject({
 			"fixture/escalate-external-feat": "escalate",
 			"fixture/escalate-failing-check": "escalate",
+			"fixture/escalate-model-size": "escalate",
 			"fixture/escalate-protected-path": "escalate",
 			"fixture/merge-clean": "merge",
 			"fixture/skip-draft": "skip",
@@ -112,13 +114,17 @@ describe("recordReviews", () => {
 		const reviewFn = vi.fn(async () => base.review as ReviewResult);
 		const stripped = named.map(({ review: _r, ...c }) => c);
 		const out = await recordReviews(stripped, reviewFn);
-		expect(reviewFn).toHaveBeenCalledTimes(2);
+		expect(reviewFn).toHaveBeenCalledTimes(3);
 		expect(
 			out
 				.filter((c) => c.review)
 				.map((c) => c.name)
 				.sort(),
-		).toEqual(["fixture/merge-clean", "fixture/veto-unrelated-change"]);
+		).toEqual([
+			"fixture/escalate-model-size",
+			"fixture/merge-clean",
+			"fixture/veto-unrelated-change",
+		]);
 	});
 });
 

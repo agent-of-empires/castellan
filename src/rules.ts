@@ -255,17 +255,28 @@ const ESCALATE: Record<string, Rule> = {
 			.map((k) => ({ text: `check ${k.name} is ${k.conclusion}` })),
 	coderabbit: (s) =>
 		when(s.codeRabbit === "CHANGES_REQUESTED", "CodeRabbit requested changes"),
+	// The numbers are `size: fixed`, which is the default, so a repo that already
+	// set them keeps the gate it had. `model` drops the numbers for a judgement,
+	// `off` drops both.
 	max_lines: (s, c) =>
-		when(
-			lines(s) > c.limits.maxLines,
-			`${lines(s)} changed lines, limit ${c.limits.maxLines}`,
-		),
-	max_files: (s, c) =>
-		when(
-			s.filesTruncated || s.files.length > c.limits.maxFiles,
-			`more than ${c.limits.maxFiles} files changed`,
-		),
+		c.size === "fixed"
+			? when(
+					lines(s) > c.limits.maxLines,
+					`${lines(s)} changed lines, limit ${c.limits.maxLines}`,
+				)
+			: [],
+	max_files: (s, c) => {
+		if (s.filesTruncated)
+			return [{ text: "more files changed than the snapshot holds" }];
+		return c.size === "fixed"
+			? when(
+					s.files.length > c.limits.maxFiles,
+					`more than ${c.limits.maxFiles} files changed`,
+				)
+			: [];
+	},
 	max_dirs: (s, c) => {
+		if (c.size !== "fixed") return [];
 		const dirs = new Set(
 			s.files.map((f) => (f.path.includes("/") ? f.path.split("/")[0] : "")),
 		);
@@ -274,6 +285,8 @@ const ESCALATE: Record<string, Rule> = {
 			`${dirs.size} top-level dirs changed, limit ${c.limits.maxTopLevelDirs}`,
 		);
 	},
+	// Not a policy limit: the diff is cut by `CAPS` in `llm.ts`, so the review
+	// would be of part of the change. Every mode escalates rather than merge.
 	diff_truncated: (s) => when(s.diffTruncated, "diff was truncated"),
 	migration: (s, c) =>
 		paths(touching(s, c.paths.migrations), "touches a migration"),
