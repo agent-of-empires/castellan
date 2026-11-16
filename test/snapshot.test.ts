@@ -21,6 +21,8 @@ interface Over {
 	reviews?: unknown[];
 	checks?: unknown[];
 	commits?: unknown[];
+	/** `commits` on the PR itself, which the API caps at 250 listed. */
+	commitCount?: number;
 }
 
 const review = (login: string, state: string, commit_id = "abc") => ({
@@ -46,6 +48,7 @@ function fixture(over: Over = {}) {
 			repo: { id: 1 },
 		},
 		labels: [{ name: "castellan:merge" }],
+		commits: over.commitCount ?? 1,
 	});
 	const request = vi.fn(
 		async (_route: string, params: { mediaType?: unknown }) => ({
@@ -260,6 +263,27 @@ describe("buildSnapshot", () => {
 		expect(paginate.mock.calls.map((c) => c[0]).join()).not.toMatch(
 			/comments|labels/,
 		);
+	});
+});
+
+describe("the commit list", () => {
+	it("marks the list cut when the PR reports more commits than are listed", async () => {
+		const short = await buildSnapshot(
+			fixture({ commitCount: 251 }).transport,
+			repo,
+			7,
+			"maintainer",
+		);
+		// GitHub returns at most 250 commits, oldest first, so the newest are missing.
+		expect(short.commitsTruncated).toBe(true);
+
+		const whole = await buildSnapshot(
+			fixture().transport,
+			repo,
+			7,
+			"maintainer",
+		);
+		expect(whole.commitsTruncated).toBe(false);
 	});
 });
 

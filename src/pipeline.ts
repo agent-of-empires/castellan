@@ -10,7 +10,7 @@ import type { Brief } from "./comment.js";
 import { type Config, githubReader, loadConfig } from "./config.js";
 import { addedLines, rightLines } from "./diff.js";
 import { readFiles, renderFileContext } from "./files.js";
-import { planFixes, pushFixes } from "./fix.js";
+import { MAX_COMMITS, planFixes, pushFixes } from "./fix.js";
 import {
 	createGithubClient,
 	type GithubTransport,
@@ -435,10 +435,12 @@ export async function evaluatePull(
 					baseRepoId: snapshot.baseRepoId,
 					baseRef: snapshot.baseRef,
 					defaultBranch,
-					login,
-					castellanCommits: snapshot.commits.filter(
-						(c) => FIX_TRAILER.test(c.message) || c.logins.includes(login),
-					).length,
+					// A cut commit list may hide the newest ones, so it counts as the cap.
+					castellanCommits: snapshot.commitsTruncated
+						? MAX_COMMITS
+						: snapshot.commits.filter(
+								(c) => FIX_TRAILER.test(c.message) || c.logins.includes(login),
+							).length,
 					fixes: planFixes(result, addedLines(snapshot.diff), {
 						changed: new Set(
 							snapshot.files
@@ -485,7 +487,7 @@ export async function evaluatePull(
 				repoRef.owner,
 			),
 			related: related.length ? related : undefined,
-			fixes: fixes,
+			fixes,
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {

@@ -44,6 +44,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	checks: [{ name: "ci", conclusion: "success" }],
 	reviews: [],
 	commits: [{ logins: ["alice"], message: "fix: thing" }],
+	commitsTruncated: false,
 	codeRabbit: null,
 	...over,
 });
@@ -738,6 +739,34 @@ ${SIZED}`;
 			c = next ?? c;
 		}
 		expect(run(s, c, required, x).outcome).toBe("candidate");
+	});
+
+	it("does not take a bot approval as the human one", async () => {
+		const c = await load(yaml);
+		const wrote = snap({
+			commits: [
+				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
+			],
+			reviews: [
+				{ login: "coderabbitai[bot]", state: "APPROVED", commitId: "abc" },
+			],
+		});
+		expect(rulesOf(run(wrote, c, [], x))).toContain("castellan_written");
+		const human = snap({
+			commits: [
+				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
+			],
+			reviews: [{ login: "bob", state: "APPROVED", commitId: "abc" }],
+		});
+		expect(rulesOf(run(human, c, [], x))).not.toContain("castellan_written");
+	});
+
+	it("treats a commit list the API cut short as castellan having written", async () => {
+		// The list holds at most 250, oldest first, so the newest commits (which are
+		// castellan's) can be missing: that must not read as "it wrote nothing".
+		const c = await load(yaml);
+		const cut = snap({ commits: [], commitsTruncated: true });
+		expect(rulesOf(run(cut, c, [], x))).toContain("castellan_written");
 	});
 
 	it("mode off comes after the other skip rules and before escalation", async () => {

@@ -50,6 +50,11 @@ export interface Snapshot {
 	 * message. Castellan's own fix commits are recognised by either.
 	 */
 	commits: { logins: string[]; message: string }[];
+	/**
+	 * True when the API listed fewer commits than the PR reports: it returns at most
+	 * 250, oldest first, so the newest (which are castellan's) can be missing.
+	 */
+	commitsTruncated: boolean;
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
 	codeRabbit: string | null;
 }
@@ -179,6 +184,7 @@ export async function buildSnapshot(
 			startedAt: c.started_at ? Date.parse(c.started_at) : null,
 		})),
 		reviews: reviewList,
+		commitsTruncated: commits.length < (pr.commits ?? 0),
 		commits: commits.map((c) => ({
 			logins: [c.author?.login, c.committer?.login].filter(
 				(l): l is string => !!l,

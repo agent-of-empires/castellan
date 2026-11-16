@@ -139,16 +139,29 @@ export const FIX_TRAILER = /^castellan-fix:/m;
  * just the head, so a later author commit does not launder it.
  */
 export function castellanWrote(s: Snapshot, login?: string): boolean {
-	return s.commits.some(
-		(c) => FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
+	// A cut commit list drops the newest commits, which are the ones castellan
+	// wrote, so an incomplete list is treated as if it wrote one.
+	return (
+		s.commitsTruncated ||
+		s.commits.some(
+			(c) =>
+				FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
+		)
 	);
 }
 
-/** A human approval on the current head, which is what lets castellan's own code merge. */
+/**
+ * A human approval on the current head, which is what lets castellan's own code
+ * merge. A bot approval is not one: an App or Action can approve without a person,
+ * so counting it would let the writer judge its own commit.
+ */
 export function humanApprovedHead(s: Snapshot, login?: string): boolean {
 	return s.reviews.some(
 		(r) =>
-			r.state === "APPROVED" && r.commitId === s.headSha && r.login !== login,
+			r.state === "APPROVED" &&
+			r.commitId === s.headSha &&
+			r.login !== login &&
+			!isBot(r.login),
 	);
 }
 
