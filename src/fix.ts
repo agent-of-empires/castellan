@@ -99,7 +99,6 @@ export interface PushScope {
 	baseRepoId: number | null;
 	baseRef: string;
 	defaultBranch: string;
-	login: string;
 	/** Castellan commits already on the PR, from `snapshot.commits`. */
 	castellanCommits: number;
 	fixes: Fix[];

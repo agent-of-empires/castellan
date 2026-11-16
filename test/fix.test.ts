@@ -247,7 +247,6 @@ const pushScope = (over: Partial<PushScope> = {}): PushScope => ({
 	baseRepoId: 1,
 	baseRef: "main",
 	defaultBranch: "main",
-	login: "castellan[bot]",
 	castellanCommits: 0,
 	fixes,
 	...over,
