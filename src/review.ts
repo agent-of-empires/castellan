@@ -19,7 +19,36 @@ export interface InlineComment {
 	body: string;
 }
 
-type Finding = { severity: string; text: string; path?: string; line?: number };
+type Finding = {
+	severity: string;
+	text: string;
+	path?: string;
+	line?: number;
+	suggestion?: string;
+};
+
+/** A one line suggestion longer than this is a rewrite, not a fix. */
+export const MAX_SUGGESTION = 300;
+
+/**
+ * The suggestion as GitHub needs it: one line, nothing that could end the code
+ * fence or forge castellan's own marker. A rejected suggestion costs the
+ * finding only its button, so the text still posts.
+ */
+/** Control, format and line-separator characters: bidi, zero width, U+2028, CR, NUL. */
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+export function suggestionText(raw?: string): string | undefined {
+	if (raw === undefined) return undefined;
+	// This string becomes repository bytes after one click, so anything invisible is
+	// refused rather than stripped: a bare CR is a line break in CommonMark, and a
+	// U+2028 or a bidi override changes what the author reads versus what they commit.
+	if (UNSAFE.test(raw.replace(/\t/g, ""))) return undefined;
+	if (!raw.trim() || raw.length > MAX_SUGGESTION) return undefined;
+	if (raw.includes("```")) return undefined;
+	if (raw.toLowerCase().includes("<!--")) return undefined;
+	return raw;
+}
 
 /**
  * Keeps only the findings GitHub will accept: a path in the diff, a line on the
@@ -55,7 +84,14 @@ export function inlineComments(
 		if (!r) return [];
 		const prefix = r.severity === "nit" ? "nit: " : "";
 		const text = escapeText(r.text.slice(0, MAX_REASON_CHARS));
-		return [{ index, path, line, body: `${prefix}${text}` }];
+		// Code is not escaped: escaping would change what the author commits. It
+		// stays inside the fence, and suggestionText already refused anything that
+		// could break out of it or smuggle an invisible instruction into the line.
+		const fix = suggestionText(r.suggestion);
+		const body = fix
+			? `${prefix}${text}\n\n\`\`\`suggestion\n${fix}\n\`\`\``
+			: `${prefix}${text}`;
+		return [{ index, path, line, body }];
 	});
 }
 

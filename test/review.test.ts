@@ -3,6 +3,7 @@ import type { GithubTransport } from "../src/github.js";
 import {
 	inlineComments,
 	MAX_INLINE,
+	MAX_SUGGESTION,
 	planInline,
 	submitReview,
 } from "../src/review.js";
@@ -64,6 +65,62 @@ describe("inlineComments", () => {
 				body: "nit: prefer someone and &lt;b>",
 			},
 		]);
+	});
+
+	it("offers a one line fix as a suggestion", () => {
+		const out = inlineComments(
+			[{ index: 0, path: "src/a.ts", line: 2 }],
+			[
+				{
+					severity: "concern",
+					text: "guard it",
+					suggestion: "if (!x) return;",
+				},
+			],
+		);
+		expect(out[0]?.body).toBe(
+			"guard it\n\n```suggestion\nif (!x) return;\n```",
+		);
+	});
+
+	it("keeps the code verbatim, without escaping it", () => {
+		const out = inlineComments(
+			[{ index: 0, path: "p", line: 1 }],
+			[
+				{
+					severity: "nit",
+					text: "mention him",
+					suggestion: "// call @bob <b>",
+				},
+			],
+		);
+		expect(out[0]?.body).toContain("// call @bob <b>");
+	});
+
+	it("drops a suggestion that is not one line of plain code", () => {
+		const bodies = [
+			"two\nlines",
+			"```js",
+			"<!-- castellan }",
+			"x".repeat(MAX_SUGGESTION + 1),
+			"   ",
+			// A bare CR is a line ending in CommonMark, so it is refused, not joined.
+			"a();\rb();",
+			"a();\r\nb();",
+			// U+2028 ends a `//` comment in JavaScript, so `evil()` would run.
+			"// ok\u2028evil();",
+			// Trojan Source: what is rendered differs from what is committed.
+			"if (role \u202e=== 'admin'\u2066) {",
+			"zero\u200bwidth",
+			"nul\u0000byte",
+		].map(
+			(suggestion) =>
+				inlineComments(
+					[{ index: 0, path: "p", line: 1 }],
+					[{ severity: "nit", text: "t", suggestion }],
+				)[0]?.body,
+		);
+		for (const body of bodies) expect(body).toBe("nit: t");
 	});
 
 	it("drops a finding the reason list no longer holds", () => {
