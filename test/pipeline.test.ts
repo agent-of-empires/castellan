@@ -40,12 +40,9 @@ interface World {
 	diff?: string;
 	/** CODEOWNERS content; `yaml` stands in for it when unset. */
 	codeowners?: string;
-<<<<<<< HEAD
 	files?: SnapshotFile[];
-=======
 	/** Issue comments, e.g. castellan's own sticky comment. */
 	comments?: { id: number; body: string; user: { login: string } }[];
->>>>>>> 4289ed5 (fix(review): keep carried findings through a failed or repeated head)
 }
 
 function world({
@@ -59,7 +56,6 @@ function world({
 	stickyBody,
 	diff = "diff --git a/src/a.ts b/src/a.ts",
 	codeowners,
-<<<<<<< HEAD
 	files = [
 		{
 			filename: "src/a.ts",
@@ -68,10 +64,10 @@ function world({
 			deletions: 1,
 		},
 	],
-=======
 	comments = [],
->>>>>>> 4289ed5 (fix(review): keep carried findings through a failed or repeated head)
 }: World = {}) {
+	/** Mutated by a test to move the PR to a new head between runs. */
+	const headState = { head: "head1" };
 	const posted = new Map<string, unknown>();
 	let sticky: string | null = stickyBody ?? null;
 	const request = vi.fn(
@@ -111,7 +107,7 @@ function world({
 						node_id: "PR_1",
 						auto_merge: null,
 						base: { ref: "main", sha: "base1" },
-						head: { ref: "feat/x", sha: "head1" },
+						head: { ref: "feat/x", sha: headState.head },
 					},
 				};
 			}
@@ -129,9 +125,6 @@ function world({
 		},
 	);
 	const paginate = vi.fn(async (route: string): Promise<unknown[]> => {
-<<<<<<< HEAD
-		if (route.endsWith("/files")) return files;
-=======
 		if (route.endsWith("/comments")) {
 			if (comments.length) return comments;
 			if (sticky) {
@@ -139,17 +132,7 @@ function world({
 			}
 			return [];
 		}
-		if (route.endsWith("/files")) {
-			return [
-				{
-					filename: "src/a.ts",
-					status: "modified",
-					additions: 3,
-					deletions: 1,
-				},
-			];
-		}
->>>>>>> 4289ed5 (fix(review): keep carried findings through a failed or repeated head)
+		if (route.endsWith("/files")) return files;
 		if (route.endsWith("/check-runs")) {
 			return checks;
 		}
@@ -188,7 +171,7 @@ function world({
 			| undefined;
 		return args?.[call]?.[0]?.messages?.[0]?.content ?? "";
 	};
-	return { env, request, paginate, graphql, create, routes, sent };
+	return { env, request, paginate, graphql, create, routes, sent, headState };
 }
 
 describe("evaluatePull", () => {
@@ -300,6 +283,54 @@ describe("evaluatePull", () => {
 		// model sees, and it is written forward instead of being dropped.
 		expect(w.sent()).toContain("the lock is never released");
 		expect(w.sent()).toContain("at oldhead");
+	});
+
+	it("carries a finding across a head whose model run failed", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		const body = () =>
+			String(
+				w.request.mock.calls
+					.filter((c) => c[0] === COMMENT || c[0] === PATCH_COMMENT)
+					.at(-1)?.[1]?.body,
+			);
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						...verdict,
+						reasons: [
+							{
+								severity: "blocker",
+								text: "the lock is never released",
+								path: "src/a.ts",
+								line: 2,
+							},
+						],
+					}),
+				},
+			],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		// An ok run stores its reasons in `llm`, so the block carries no second copy.
+		expect(body()).not.toContain('"carry"');
+
+		w.headState.head = "head2";
+		w.create.mockRejectedValue(new Error("model down"));
+		await evaluatePull(w.env, repo, 3);
+		// The head with no model run writes the earlier finding forward.
+		expect(body()).toContain('"carry"');
+
+		w.headState.head = "head3";
+		w.create.mockResolvedValue({
+			content: [{ type: "text", text: JSON.stringify(verdict) }],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent(w.create.mock.calls.length - 1)).toContain(
+			"the lock is never released",
+		);
 	});
 
 	it("still carries an earlier head's findings on a same-head re-run", async () => {

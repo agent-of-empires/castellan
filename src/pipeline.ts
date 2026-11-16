@@ -373,11 +373,10 @@ export async function evaluatePull(
 			},
 		});
 		const result = dedup.source === "skipped" ? undefined : dedup.result;
-		// Write the carried findings forward on a head whose model run failed or was
-		// skipped, so the next head still sees what an earlier review reported.
-		key.carry = result?.ok
-			? { sha: snapshot.headSha, reasons: result.verdict.reasons }
-			: carried;
+		// Write the carried findings forward only on a head whose model run failed or
+		// was skipped: an ok run already publishes its reasons in `llm`, which the
+		// next run reads first, so a second copy would only grow the block.
+		key.carry = result?.ok ? undefined : carried;
 		const outcome = decide(decision, result);
 		if (!outcome) return { status: "skipped" };
 		// Only a model finding can be anchored: a rule reason has no line in the diff.
