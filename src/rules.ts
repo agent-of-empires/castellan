@@ -40,7 +40,8 @@ const PASSING = ["success", "neutral"];
 const PENDING = ["pending", "queued", "in_progress"];
 const MINUTE = 60_000;
 const OK = [...PASSING, "skipped"];
-const GENERATED =
+/** Lockfiles, generated trees and `.generated.` files: never worth model context. */
+export const GENERATED =
 	/(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock)$|\.generated\.|(^|\/)(dist|generated)\//;
 const CODEOWNERS_FILE = /^(\.github\/|docs\/)?CODEOWNERS$/;
 
