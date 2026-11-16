@@ -46,7 +46,9 @@ export async function readFiles(
 			throw err;
 		}
 		if (typeof text !== "string" || isBinary(text)) continue;
-		const room = FILE_CAPS.total - used - header(path, false).length - 2;
+		// A file that ends up cut is rendered with the longer `(truncated)` header, so
+		// the room is computed with the longest header it could carry.
+		const room = FILE_CAPS.total - used - header(path, true).length - 2;
 		const limit = Math.min(FILE_CAPS.perFile, room);
 		if (limit <= 0) break;
 		const truncated = text.length > limit;

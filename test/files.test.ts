@@ -98,9 +98,12 @@ describe("readFiles", () => {
 			"c.ts",
 			"d.ts",
 		]);
-		const total = files.reduce((n, f) => n + f.text.length, 0);
-		expect(total).toBeLessThanOrEqual(FILE_CAPS.total);
+		// What the model reads includes the headers, so the rendered field is what
+		// the cap has to hold, and the last file's longer header counts.
+		const rendered = renderFileContext(files) as string;
+		expect(rendered.length).toBeLessThanOrEqual(FILE_CAPS.total);
 		expect(files).toHaveLength(3);
+		expect(rendered).toContain("c.ts (truncated)");
 	});
 });
 

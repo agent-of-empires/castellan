@@ -3,6 +3,7 @@ import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { Config } from "./config.js";
+import { FILE_CAPS } from "./files.js";
 
 export interface ReviewInput {
 	title: string;
@@ -110,7 +111,7 @@ const CAPS: Record<string, number> = {
 	reviewerSummary: 800,
 	linkedIssueBody: 3000,
 	reviewThreads: 12_000,
-	files: 36_000,
+	files: FILE_CAPS.total,
 };
 
 const DEFAULT_BASE =
