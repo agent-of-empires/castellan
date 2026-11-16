@@ -304,6 +304,32 @@ const STAGES = [
 
 export const RULE_IDS = STAGES.flatMap(([, rules]) => Object.keys(rules));
 
+/** Escalations that only say the change is large; a review of it is still useful. */
+export const SIZE_RULES = new Set([
+	"max_lines",
+	"max_files",
+	"max_dirs",
+	"diff_truncated",
+]);
+
+/**
+ * True when every escalate rule outside the size set is clean. `evaluate` returns
+ * at the first rule with a hit, so its reasons would hide a later rule such as
+ * `author_class` or `human_changes_requested` behind an oversized change.
+ */
+export function onlySizeEscalates(
+	snapshot: Snapshot,
+	config: Config,
+	requiredChecks: string[],
+	ctx: Context,
+): boolean {
+	return !Object.entries(ESCALATE).some(
+		([rule, check]) =>
+			!SIZE_RULES.has(rule) &&
+			check(snapshot, config, requiredChecks, ctx).length > 0,
+	);
+}
+
 /** Deny by default; first rule that hits decides. `wait` means CI is unsettled, so nothing is judged yet. `candidate` still needs the model. */
 export function evaluate(
 	snapshot: Snapshot,
