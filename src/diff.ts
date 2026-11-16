@@ -10,13 +10,20 @@ export function rightLines(diff: string): DiffLines {
 	const out: DiffLines = new Map();
 	let path: string | null = null;
 	let line = 0;
-	for (const raw of diff.split("\n")) {
+	// PR content can add a line that reads `+++ b/x`, so a header is only a header
+	// before the first hunk of its file; inside a hunk it is added text.
+	let inHunk = false;
+	const rows = diff.split("\n");
+	// A diff that ends with a newline leaves an empty element that is not a line.
+	if (rows.at(-1) === "") rows.pop();
+	for (const raw of rows) {
 		if (raw.startsWith("diff --git ")) {
 			path = null;
 			line = 0;
+			inHunk = false;
 			continue;
 		}
-		if (raw.startsWith("+++ ")) {
+		if (!inHunk && raw.startsWith("+++ ")) {
 			// `+++ b/path`, or `+++ /dev/null` for a deletion.
 			const p = raw.slice(4).split("\t")[0]?.trim() ?? "";
 			const name = p.replace(/^b\//, "");
@@ -24,10 +31,11 @@ export function rightLines(diff: string): DiffLines {
 			if (path && !out.has(path)) out.set(path, new Set());
 			continue;
 		}
-		if (raw.startsWith("--- ")) continue;
+		if (!inHunk && raw.startsWith("--- ")) continue;
 		const hunk = HUNK.exec(raw);
 		if (hunk?.[1]) {
 			line = Number(hunk[1]);
+			inHunk = true;
 			continue;
 		}
 		if (path === null) continue;

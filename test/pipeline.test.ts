@@ -314,6 +314,7 @@ describe("evaluatePull", () => {
 
 	it("posts a model finding that lands on a diff line as an inline review comment", async () => {
 		const w = world({
+			yaml: "mode: enforce\nreview: { inline: true }\ntrustedAuthors: [alice]",
 			diff: [
 				"diff --git a/src/a.ts b/src/a.ts",
 				"--- a/src/a.ts",
@@ -332,7 +333,7 @@ describe("evaluatePull", () => {
 						new_behavior: false,
 						reasons: [
 							{
-								severity: "concern",
+								severity: "blocker",
 								text: "no test covers this",
 								path: "src/a.ts",
 								line: 2,
@@ -345,10 +346,19 @@ describe("evaluatePull", () => {
 		});
 		const r = await evaluatePull(w.env, repo, 3);
 		expect(r.brief?.inline).toEqual([{ index: 0, path: "src/a.ts", line: 2 }]);
+		// A blocker in enforce asks for changes rather than only commenting.
 		expect(w.request).toHaveBeenCalledWith(
 			APPROVE,
 			expect.objectContaining({
-				comments: [{ path: "src/a.ts", line: 2, body: "no test covers this" }],
+				event: "REQUEST_CHANGES",
+				comments: [
+					{
+						index: 0,
+						path: "src/a.ts",
+						line: 2,
+						body: "no test covers this",
+					},
+				],
 			}),
 		);
 	});

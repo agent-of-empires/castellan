@@ -243,6 +243,19 @@ prompt:
     - Bug fixes need a reproduce then fix test.
 ```
 
+### `review`
+
+| Key      | Default | Meaning                                                                                                                                          |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `inline` | `false` | Post the model's anchored findings as inline review comments on the diff. Off by default, so an upgrade never starts posting reviews on its own. |
+
+When on, findings are posted as their own review, never as part of the approval: `COMMENT` in shadow, and in `enforce` `COMMENT` for concerns or nits and `REQUEST_CHANGES` for a blocker. A later `merge` verdict's approval supersedes that `REQUEST_CHANGES`. A `merge` verdict never carries inline comments, because each one opens a thread that a ruleset requiring conversation resolution would hold the auto-merge on; those findings stay in the brief.
+
+```yaml
+review:
+  inline: true
+```
+
 ### A full example
 
 ```yaml
@@ -258,6 +271,7 @@ llm: { provider: bedrock }
 prompt:
   guidance:
     - Prefer small, focused changes.
+review: { inline: true }
 ```
 
 ## Not configurable
@@ -299,7 +313,7 @@ The `castellan` commit status is posted only when its state, description or targ
 
 Required checks come from the rulesets API only; classic branch protection is not read. Checks are every check run on the head SHA, not only the required ones. Commit statuses (not check runs) are not evaluated.
 
-**Model.** Only a PR that passed every rule is reviewed. The model returns `intent_match`, `new_behavior` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block. A finding that also names a `path` and a `line` the diff shows is posted as an inline review comment on that line instead, at most 10 per review, with a `nit` prefixed `nit:`; the brief then only counts those. A finding without both stays in the brief, and if the review cannot be posted at all its findings stay in the brief too.
+**Model.** Only a PR that passed every rule is reviewed. The model returns `intent_match`, `new_behavior` and findings with severity `blocker`, `concern` or `nit`. A `merge` needs `intent_match` true, `new_behavior` false and no `blocker`. Any failure of the model (no key, no price for the model, timeout, SDK error, unparsable output) escalates with `llm_unavailable`. `concern` and `nit` findings appear in the brief as a checklist and do not block. With [`review.inline`](#review) on, a finding that also names a `path` and a `line` the diff shows is posted as an inline review comment on that line instead, at most 10 per review, with a `nit` prefixed `nit:`; the brief then only counts those. A finding without both stays in the brief, a finding already posted on that path and line is not posted again, and if the review cannot be posted at all its findings stay in the brief too.
 
 ### Author classes
 
@@ -329,7 +343,8 @@ For an external author, a `!` breaking change title, a `feat:` title and any tit
 - A `merge` that touches the config file, CODEOWNERS, `.github/`, `paths.protected`, `paths.release` or a `teams.protected` file is downgraded to `escalate` right before acting (rule `protected_guard`), even if the rules above let it through.
 - The head SHA must not have moved. The approval, the auto-merge request and the immediate merge are all pinned to the evaluated SHA.
 - Merge method is always squash.
-- The review is the same one that carries the inline findings: `APPROVE` only in `enforce` with a `merge` verdict, `COMMENT` in shadow and for an escalation, never `REQUEST_CHANGES`, so an escalation waits for a human instead of blocking the PR.
+- An approval is always its own review and never carries inline comments, so one rejected anchor cannot fail it and its comments cannot open threads that hold the auto-merge. With [`review.inline`](#review) on, findings are posted as a separate review: `COMMENT` in shadow, and in `enforce` `COMMENT` for concerns or nits and `REQUEST_CHANGES` for a blocker. A later `merge` verdict on a new head posts the approval, which supersedes that `REQUEST_CHANGES`. A `merge` verdict never carries inline comments, so its findings stay in the brief.
+- A re-run on the same head posts only the comments that are new; `PUT` cannot add comments to an existing review. Concurrent deliveries can both post, so a finding is also skipped when castellan already commented on the same path and line at any head.
 - Approves as the App only after the guards above. One review per head: an existing review by the App at this head is edited in place (`PUT .../reviews/{id}`), so a re-run does not stack reviews. A `COMMENT` review cannot become an approval, so `enforce` still posts a new approving review after a shadow run happened to leave one at the same head.
 - If the approving review or the queueing fails, the status goes to `pending` and the comment says why (`review_failed`, `auto_merge_failed`). If auto-merge cannot be enabled because the PR is already mergeable ("clean status"), it merges immediately.
 - Re-running sequentially on the same head neither approves twice nor re-queues. There is no lock: two concurrent deliveries on the same head can both approve.

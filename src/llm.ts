@@ -100,7 +100,7 @@ export interface LlmDeps {
 }
 
 /** Bump on any change to DEFAULT_BASE, FORMAT or the message layout; it invalidates cached verdicts. */
-export const PROMPT_VERSION = "4";
+export const PROMPT_VERSION = "5";
 
 const CAPS: Record<string, number> = {
 	body: 3000,
@@ -134,6 +134,8 @@ export function promptHash({ prompt, models }: Config): string {
 		prompt.guidance,
 		models.review,
 		PROMPT_VERSION,
+		// FORMAT is part of the prompt, so a change to it must invalidate cached verdicts.
+		FORMAT,
 	]);
 }
 
