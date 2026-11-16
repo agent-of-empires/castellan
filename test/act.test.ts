@@ -12,6 +12,8 @@ const MERGE = "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge";
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
 const DISMISS =
 	"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals";
+const REVIEWERS =
+	"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers";
 
 const repo = { owner: "o", repo: "r" };
 const author = { login: "castellan[bot]" };
@@ -26,6 +28,7 @@ const load = async (yaml: string): Promise<Config> => {
 const snapshot = (paths: string[] = ["src/a.ts"]) =>
 	({
 		headSha: "head1",
+		author: "alice",
 		files: paths.map((path) => ({
 			path,
 			status: "modified",
@@ -84,6 +87,7 @@ interface World {
 	reviews?: unknown[];
 	reviewError?: Error;
 	graphqlError?: Error;
+	reviewersError?: Error;
 }
 
 function fake({
@@ -93,8 +97,10 @@ function fake({
 	reviews = [],
 	reviewError,
 	graphqlError,
+	reviewersError,
 }: World = {}) {
 	const request = vi.fn(async (route: string, _params?: unknown) => {
+		if (route === REVIEWERS && reviewersError) throw reviewersError;
 		if (route.startsWith("GET /repos/{owner}/{repo}/pulls/")) {
 			return {
 				data: {
@@ -520,5 +526,99 @@ describe("queue failures", () => {
 		});
 		const last = sent(COMMENT).at(-1)?.body ?? "";
 		expect(last).toContain("could not post the approving review");
+	});
+});
+
+describe("escalation reviewers", () => {
+	it("asks the owning team for a review in enforce", async () => {
+		const { request, result } = await run(
+			"mode: enforce",
+			{},
+			{
+				verdict: "escalate",
+				brief: { ...brief("escalate"), ownerTeam: "platform" },
+			},
+		);
+		expect(result.skipped).toBe("not_merge");
+		expect(request).toHaveBeenCalledWith(REVIEWERS, {
+			owner: "o",
+			repo: "r",
+			pull_number: 3,
+			team_reviewers: ["platform"],
+		});
+	});
+
+	it("falls back to reviewers.team and drops the PR author from reviewers.users", async () => {
+		const { request } = await run(
+			"mode: enforce\nreviewers:\n  team: maintainers\n  users: [alice, bob]",
+			{},
+			{ verdict: "escalate" },
+		);
+		expect(request).toHaveBeenCalledWith(
+			REVIEWERS,
+			expect.objectContaining({ team_reviewers: ["maintainers"] }),
+		);
+		// The PR author is the one GitHub rejects, not the App login.
+		expect(request).toHaveBeenCalledWith(
+			REVIEWERS,
+			expect.objectContaining({ reviewers: ["bob"] }),
+		);
+	});
+
+	it("asks once per head and records it in the state block", async () => {
+		const f = fake({});
+		const config = await load("mode: enforce\nreviewers:\n  team: maintainers");
+		const b = brief("escalate");
+		const input = {
+			pullNumber: 3,
+			snapshot: snapshot(),
+			config,
+			ctx,
+			brief: b,
+			author,
+		};
+		await act(f.transport, repo, input);
+		const calls = () => f.routes().filter((r) => r === REVIEWERS).length;
+		expect(calls()).toBe(1);
+		const body = (f.sent(COMMENT).at(-1)?.body ?? "") as string;
+		expect(body).toContain('"requested":"head1"');
+		// The next event on the same head reads that flag and asks nobody again.
+		b.key.requested = "head1";
+		await act(f.transport, repo, input);
+		expect(calls()).toBe(1);
+	});
+
+	it("asks nobody in shadow", async () => {
+		const { routes } = await run(
+			"mode: shadow\nreviewers:\n  team: maintainers",
+			{},
+			{ verdict: "escalate" },
+		);
+		expect(routes()).not.toContain(REVIEWERS);
+	});
+
+	it("asks nobody when a merge is queued", async () => {
+		const { routes } = await run(
+			"mode: enforce\nreviewers:\n  team: maintainers",
+		);
+		expect(routes()).not.toContain(REVIEWERS);
+	});
+
+	it("asks nobody when no reviewer is configured", async () => {
+		const { routes } = await run("mode: enforce", {}, { verdict: "escalate" });
+		expect(routes()).not.toContain(REVIEWERS);
+	});
+
+	it("still escalates when the request fails", async () => {
+		const { result } = await run(
+			"mode: enforce\nreviewers:\n  team: maintainers",
+			{ reviewersError: new Error("422") },
+			{ verdict: "escalate" },
+		);
+		expect(result).toEqual({
+			approved: false,
+			queued: false,
+			skipped: "not_merge",
+		});
 	});
 });
