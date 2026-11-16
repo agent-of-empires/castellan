@@ -10,7 +10,12 @@ import {
 	submitReview,
 } from "./review.js";
 import { escalationReviewers, requestReviewers } from "./reviewers.js";
-import { type Context, touchesProtected } from "./rules.js";
+import {
+	type Context,
+	castellanWrote,
+	humanApprovedHead,
+	touchesProtected,
+} from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
 
@@ -34,7 +39,8 @@ export interface ActResult {
 		| "not_open"
 		| "stale_head"
 		| "queue_failed"
-		| "review_failed";
+		| "review_failed"
+		| "pushed_fixes";
 }
 
 const ENABLE_AUTO_MERGE = `mutation($id: ID!, $oid: GitObjectID!) {
@@ -68,6 +74,19 @@ export async function act(
 	if (brief.key.headSha !== headSha) {
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
+	// The head this brief describes is gone: castellan just wrote a newer one.
+	// Only the comment is updated, so no review, status or reviewer request is
+	// aimed at a commit nobody can act on; the push event reviews the new head.
+	if (brief.fixes) {
+		await upsertComment(
+			transport,
+			repoRef,
+			pullNumber,
+			renderComment(brief),
+			author,
+		);
+		return { approved: false, queued: false, skipped: "pushed_fixes" };
+	}
 
 	const escalate = (rule: string, text: string): Brief => ({
 		...brief,
@@ -92,13 +111,26 @@ export async function act(
 	};
 
 	// Refuse in code even if the rules let a protected change through.
-	const final =
-		brief.outcome.verdict === "merge" && touchesProtected(snapshot, config, ctx)
-			? escalate(
-					"protected_guard",
-					"touches a protected path, protected team or governance file",
-				)
-			: brief;
+	const guarded = (): Brief => {
+		if (brief.outcome.verdict !== "merge") return brief;
+		if (touchesProtected(snapshot, config, ctx))
+			return escalate(
+				"protected_guard",
+				"touches a protected path, protected team or governance file",
+			);
+		// The writer is not the judge: a head castellan committed needs a human
+		// approval on that head, not another automated one.
+		if (
+			castellanWrote(snapshot, author.login) &&
+			!humanApprovedHead(snapshot, author.login)
+		)
+			return escalate(
+				"castellan_written",
+				"castellan wrote a commit on this head and no human approved it",
+			);
+		return brief;
+	};
+	const final = guarded();
 	const isMerge = final.outcome.verdict === "merge";
 	// A merge verdict never carries inline comments: each one opens a thread that a
 	// ruleset requiring conversation resolution would hold the auto-merge on. Those

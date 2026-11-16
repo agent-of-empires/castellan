@@ -62,6 +62,18 @@ const base = z.strictObject({
 		})
 		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
+	/** Writing to the branch, which is the one thing castellan does not only read. */
+	fix: z
+		.strictObject({
+			pushes: z
+				.boolean()
+				.default(false)
+				.describe(
+					"Apply the review's one line suggestions as a commit on the PR branch. Enforce only.",
+				),
+			maxFixes: z.number().int().positive().default(5),
+		})
+		.prefault({}),
 	skip_branches: z
 		.array(z.string())
 		.default(["release-staging/*", "release-plz-*"])

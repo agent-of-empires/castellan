@@ -20,6 +20,7 @@ interface Over {
 	files?: unknown[];
 	reviews?: unknown[];
 	checks?: unknown[];
+	commits?: unknown[];
 }
 
 const review = (login: string, state: string, commit_id = "abc") => ({
@@ -38,10 +39,11 @@ function fixture(over: Over = {}) {
 		state: over.state ?? "open",
 		merged: over.merged ?? false,
 		draft: false,
-		base: { ref: "main", sha: "base1" },
+		base: { ref: "main", sha: "base1", repo: { id: 1 } },
 		head: {
 			ref: "fix/thing",
 			sha: heads.length > 1 ? heads.shift() : heads[0],
+			repo: { id: 1 },
 		},
 		labels: [{ name: "castellan:merge" }],
 	});
@@ -55,6 +57,16 @@ function fixture(over: Over = {}) {
 			return (
 				over.files ?? [
 					{ filename: "a.ts", status: "modified", additions: 2, deletions: 1 },
+				]
+			);
+		if (route.endsWith("/commits"))
+			return (
+				over.commits ?? [
+					{
+						author: { login: "alice" },
+						committer: { login: "alice" },
+						commit: { message: "fix: thing" },
+					},
 				]
 			);
 		if (route.endsWith("/reviews"))
@@ -183,7 +195,7 @@ describe("buildSnapshot", () => {
 	it("requests every paginated list with per_page 100", async () => {
 		const { transport, paginate } = fixture();
 		await buildSnapshot(transport, repo, 7, "maintainer");
-		expect(paginate).toHaveBeenCalledTimes(3);
+		expect(paginate).toHaveBeenCalledTimes(4);
 		for (const call of paginate.mock.calls) {
 			expect(call[1]).toMatchObject({ per_page: 100 });
 		}

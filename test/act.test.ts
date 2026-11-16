@@ -25,16 +25,22 @@ const load = async (yaml: string): Promise<Config> => {
 	return r.config;
 };
 
-const snapshot = (paths: string[] = ["src/a.ts"]) =>
+const snapshot = (
+	paths: string[] = ["src/a.ts"],
+	over: Partial<Snapshot> = {},
+) =>
 	({
 		headSha: "head1",
 		author: "alice",
+		reviews: [],
+		commits: [],
 		files: paths.map((path) => ({
 			path,
 			status: "modified",
 			additions: 1,
 			deletions: 0,
 		})),
+		...over,
 	}) as Snapshot;
 
 const ctx: Context = {

@@ -193,11 +193,19 @@ describe("collectCases", () => {
 			];
 		if (route.endsWith("/pulls/{pull_number}/commits"))
 			return [
-				{ author: { login: "alice", type: "User" } },
-				{ author: { login: "dependabot[bot]", type: "Bot" } },
-				{ author: null },
+				{ author: { login: "alice", type: "User" }, commit: { message: "a" } },
+				{
+					author: { login: "dependabot[bot]", type: "Bot" },
+					commit: { message: "b" },
+				},
+				{ author: null, commit: { message: "c" } },
 				...(p.pull_number === 5
-					? [{ author: { login: "carol", type: "User" } }]
+					? [
+							{
+								author: { login: "carol", type: "User" },
+								commit: { message: "d" },
+							},
+						]
 					: []),
 			];
 		if (route.endsWith("/reviews"))
