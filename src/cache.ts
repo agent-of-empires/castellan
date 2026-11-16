@@ -11,6 +11,10 @@ const blockSchema = z.strictObject({
 	headSha: z.string(),
 	promptHash: z.string(),
 	model: z.string(),
+	/** `threadsKey` of the unresolved threads the verdict answered; absent on an older block. */
+	threads: z.string().optional(),
+	/** Thread-driven model runs already spent on this head; bounds a commenter's leverage. */
+	threadReruns: z.number().int().min(0).optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -33,6 +37,10 @@ export interface CacheKey {
 	headSha: string;
 	promptHash: string;
 	model: string;
+	/** Changes when a review thread appears, is resolved or goes stale. */
+	threads?: string;
+	/** Persisted with the block; it is not part of the cache key match. */
+	threadReruns?: number;
 }
 
 export const MARKER = "<!-- castellan";
@@ -71,8 +79,10 @@ export type Dedup =
 	| { source: "skipped" };
 
 /**
- * `skipModel` PRs never reach the LLM. A cache hit needs headSha, promptHash and
- * model to all match; any other change runs fresh. The caller must only persist `ok: true`.
+ * `skipModel` PRs never reach the LLM. A cache hit needs headSha, promptHash,
+ * model and threads to all match; any other change runs fresh. A block written
+ * before `threads` existed never matches, which re-runs once and fails safe.
+ * The caller must only persist `ok: true`.
  */
 export async function getOrRun(opts: {
 	cached: CacheBlock | null;
@@ -86,7 +96,8 @@ export async function getOrRun(opts: {
 		cached?.llm &&
 		cached.headSha === key.headSha &&
 		cached.promptHash === key.promptHash &&
-		cached.model === key.model
+		cached.model === key.model &&
+		cached.threads === key.threads
 	) {
 		return {
 			source: "cache",
