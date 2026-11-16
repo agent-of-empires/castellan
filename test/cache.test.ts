@@ -24,6 +24,34 @@ const key = { headSha: "abc", promptHash: "p1", model: "m1" };
 const block: CacheBlock = { verdict: "merge", ...key, llm };
 
 describe("block format", () => {
+	it("still reads a block written before the size judgement existed", () => {
+		// `parseBlock` returns null for a malformed block, and that would drop the
+		// carried findings and the reviewer-request flag with it.
+		const old = JSON.stringify({
+			v: 1,
+			verdict: "escalate",
+			headSha: "abc",
+			promptHash: "p1",
+			model: "m1",
+			requested: "abc",
+			carry: { sha: "old", reasons: [{ severity: "blocker", text: "x" }] },
+			llm: {
+				ok: true,
+				verdict: {
+					intent_match: true,
+					new_behavior: false,
+					reasons: [],
+				},
+				usage: { inputTokens: 1, outputTokens: 1 },
+				costUsd: 0,
+			},
+		});
+		const parsed = parseBlock(`brief\n\n<!-- castellan ${old} -->`);
+		expect(parsed?.requested).toBe("abc");
+		expect(parsed?.carry?.sha).toBe("old");
+		expect(parsed?.llm?.verdict.escalate).toBe(false);
+	});
+
 	it("round-trips inside a comment body", () => {
 		const body = `## Castellan\n\nbrief\n\n${serializeBlock(block)}`;
 		expect(parseBlock(body)).toEqual(block);

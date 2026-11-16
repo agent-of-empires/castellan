@@ -81,6 +81,18 @@ describe("buildSystemPrompt", () => {
 		expect(p).toContain("A change with no defects has an empty reasons array");
 	});
 
+	it("asks for the size judgement only when the mode reads it", async () => {
+		const judged = buildSystemPrompt(await cfg("size: model"));
+		expect(judged).toContain('Set "escalate" to true');
+		expect(judged).toContain('"escalate": boolean');
+
+		const off = buildSystemPrompt(await cfg("size: off"));
+		expect(off).not.toContain('Set "escalate" to true');
+		expect(off).not.toContain('"escalate": boolean');
+		// The rest of the contract still goes out.
+		expect(off).toContain("Every reason must name a defect");
+	});
+
 	it("tells the model what a review thread is", async () => {
 		const p = buildSystemPrompt(await cfg());
 		expect(p).toContain('"reviewThreads" lists the pull request\'s unresolved');
@@ -317,6 +329,31 @@ describe("review", () => {
 			ok: false,
 			error: "missing_key",
 		});
+	});
+});
+
+describe("the size judgement in the reply", () => {
+	it("is not required when the mode ignores it", async () => {
+		const { create, client } = fake(
+			JSON.stringify({ intent_match: true, new_behavior: false, reasons: [] }),
+		);
+		const r = await review(input, await cfg("size: off"), { client });
+		expect(r.ok).toBe(true);
+		expect(r.ok && r.verdict.escalate).toBe(false);
+		expect(create).toHaveBeenCalledTimes(1);
+	});
+
+	it("still fails closed when the mode reads it and no concern is named", async () => {
+		const { client } = fake(
+			JSON.stringify({
+				intent_match: true,
+				new_behavior: false,
+				escalate: true,
+				reasons: [],
+			}),
+		);
+		const r = await review(input, await cfg("size: fixed"), { client });
+		expect(r.ok).toBe(false);
 	});
 });
 
