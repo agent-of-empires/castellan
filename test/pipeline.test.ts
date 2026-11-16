@@ -207,6 +207,17 @@ describe("evaluatePull", () => {
 		expect(r.brief?.ownerTeam).toBe("platform");
 	});
 
+	it("gives the model the changed files as they read at the head", async () => {
+		const w = world();
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent()).toContain("BEGIN files");
+		expect(w.sent()).toContain("===== src/a.ts =====");
+		expect(w.request).toHaveBeenCalledWith(
+			"GET /repos/{owner}/{repo}/contents/{path}",
+			expect.objectContaining({ path: "src/a.ts", ref: "head1" }),
+		);
+	});
+
 	it("reads CODEOWNERS at the base branch ref", async () => {
 		const w = world({ yaml: "teams: { protected: core }" });
 		await evaluatePull(w.env, repo, 3);
