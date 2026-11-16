@@ -25,6 +25,8 @@ interface World {
 	}[];
 	required?: string[];
 	mergeable?: boolean | null;
+	/** A comment body to start from, as a head that already holds a block would. */
+	stickyBody?: string;
 }
 
 function world({
@@ -35,9 +37,10 @@ function world({
 	checks = [{ name: "test", conclusion: "success" }],
 	required = [],
 	mergeable = true,
+	stickyBody,
 }: World = {}) {
 	const posted = new Map<string, unknown>();
-	let sticky: string | null = null;
+	let sticky: string | null = stickyBody ?? null;
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
 			if (route === STATUS) {
@@ -411,6 +414,64 @@ describe("evaluatePull", () => {
 			await evaluatePull(w.env, repo, 3);
 		}
 		expect(w.create).toHaveBeenCalledTimes(1 + MAX_THREAD_RERUNS);
+		// Past the cap the stored verdict stands, so the brief must not claim a model
+		// run read the threads that are there now.
+		const brief = w.request.mock.calls
+			.filter((c) => c[0] === COMMENT || c[0] === PATCH_COMMENT)
+			.map((c) => String(c[1]?.body))
+			.at(-1) as string;
+		expect(brief).not.toContain("Unresolved review threads checked");
+		expect(brief).toContain("used up its re-run budget");
+	});
+
+	it("counts the threads the reader capped out of the brief", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: Array.from({ length: 30 }, (_, i) => ({
+							id: `T_${i}`,
+							isResolved: false,
+							isOutdated: false,
+							comments: {
+								nodes: [
+									{
+										author: { __typename: "User", login: `rev${i}` },
+										path: "src/a.ts",
+										line: 12,
+										body: `finding ${i}`,
+									},
+								],
+							},
+						})),
+					},
+				},
+			},
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		// 25 reach the field, and the 5 the reader dropped are stated, not lost.
+		expect(r.brief?.threads).toBe(25);
+		expect(r.brief?.threadsDropped).toBe(5);
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Unresolved review threads not sent: 5");
+	});
+
+	it("keeps a block written before threads existed when the read fails", async () => {
+		const first = world({ yaml: "mode: shadow" });
+		await evaluatePull(first.env, repo, 3);
+		const body = first.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		// An older block has no `threads` key at all.
+		const old = body.replace(/,"threads":"[^"]*"/, "");
+		expect(old).not.toContain('"threads"');
+		const w = world({ yaml: "mode: shadow", stickyBody: old });
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
 	});
 });
 

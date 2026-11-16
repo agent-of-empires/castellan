@@ -28,6 +28,8 @@ export interface Brief {
 	threads?: number;
 	/** Unresolved threads read but left out of the model field by the caps. */
 	threadsDropped?: number;
+	/** Threads changed after this head spent its re-run budget, so the stored verdict stands. */
+	threadsCapped?: boolean;
 	/** `cache` means `review.costUsd` was paid by an earlier run. */
 	source: "cache" | "llm" | "skipped";
 	/** Marks the verdict line as shadow. */
@@ -165,6 +167,11 @@ export function renderComment(brief: Brief): string {
 			: []),
 		...(brief.threadsDropped && brief.review
 			? [`- Unresolved review threads not sent: ${brief.threadsDropped}`]
+			: []),
+		...(brief.threadsCapped
+			? [
+					"- Review threads changed after this head used up its re-run budget: the earlier verdict stands.",
+				]
 			: []),
 	];
 	const tail = ["", ...checksSection(brief), "", ...provenance(brief), ""];

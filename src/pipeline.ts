@@ -256,11 +256,15 @@ export async function evaluatePull(
 		// Unresolved threads are what a reviewer answers first, so they are part of
 		// the model input and of the cache key: a new thread must re-run the model.
 		let threads: ReviewThread[] = [];
+		// Threads past `MAX_THREADS` never reach `renderThreads`, so the brief has
+		// to count them here or the oldest ones go unmentioned.
+		let readDropped = 0;
 		let keepCached = false;
 		if (!skipModel) {
 			const read = await readThreads(transport, repoRef, pullNumber, login);
 			if (read.ok) {
 				threads = read.threads;
+				readDropped = read.dropped;
 			} else if (sameHead) {
 				// A failed read is not "no threads": keep the verdict this head already has.
 				keepCached = true;
@@ -285,10 +289,13 @@ export async function evaluatePull(
 		// Anyone who can comment can change this key, so a head gets a bounded number
 		// of thread-driven runs; past the cap the stored verdict stands.
 		const capped = threadChanged && spent >= MAX_THREAD_RERUNS;
+		// The verdict in hand answered the threads stored with it, not the ones read
+		// now, so the brief must not claim those were checked. A block written before
+		// `threads` existed keeps its own key, which is what `keepCached` promises.
+		const sawThreads = !skipModel && !keepCached && !capped;
 		const key = {
 			...head,
-			threads:
-				(keepCached || capped) && cached?.threads ? cached.threads : threadKey,
+			threads: keepCached || capped ? cached?.threads : threadKey,
 			threadReruns:
 				!skipModel && !keepCached && !capped && threadChanged
 					? spent + 1
@@ -327,8 +334,11 @@ export async function evaluatePull(
 			outcome,
 			key,
 			checks: snapshot.checks,
-			threads: rendered.included || undefined,
-			threadsDropped: rendered.dropped || undefined,
+			threads: sawThreads ? rendered.included || undefined : undefined,
+			threadsDropped: sawThreads
+				? rendered.dropped + readDropped || undefined
+				: undefined,
+			threadsCapped: capped || undefined,
 			review: result?.ok ? result : undefined,
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
