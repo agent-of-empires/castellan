@@ -284,7 +284,7 @@ describe("renderComment", () => {
 	});
 
 	it("says nothing about open PRs when there are none", () => {
-		expect(renderComment(brief)).not.toContain("Open PRs changing");
+		expect(renderComment(brief)).not.toContain("Open PRs that share files");
 	});
 });
 
