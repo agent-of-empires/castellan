@@ -31,6 +31,8 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	baseSha: "base1",
 	headRef: "fix/thing",
 	headSha: "abc",
+	baseRepoId: 1,
+	headRepoId: 1,
 	linkedIssues: [7],
 	files: [file("src/a.ts")],
 	filesTruncated: false,
@@ -38,6 +40,8 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
 	diffTruncated: false,
 	checks: [{ name: "ci", conclusion: "success" }],
 	reviews: [],
+	commits: [{ logins: ["alice"], message: "fix: thing" }],
+	commitsTruncated: false,
 	codeRabbit: null,
 	...over,
 });
@@ -615,6 +619,10 @@ ${SIZED}`;
 		body: "Stacked on #1",
 		bodyTruncated: true,
 		diffTruncated: true,
+		// A commit castellan wrote, so the writer is not the judge rule has something to see.
+		commits: [
+			{ logins: ["castellan[bot]"], message: "fix: x\n\ncastellan-fix: 1" },
+		],
 		codeRabbit: "CHANGES_REQUESTED",
 		checks: [
 			{ name: "ci", conclusion: "failure" },
@@ -713,6 +721,7 @@ ${SIZED}`;
 			["diff_truncated", { diffTruncated: false }],
 			["migration", files("pnpm-lock.yaml")],
 			["generated_only", files("src/a.ts")],
+			["castellan_written", { commits: [] }],
 			["human_changes_requested", { reviews: [] }],
 			["body_truncated", { bodyTruncated: false }],
 			["stacked", { body: "" }],
@@ -727,6 +736,34 @@ ${SIZED}`;
 			c = next ?? c;
 		}
 		expect(run(s, c, required, x).outcome).toBe("candidate");
+	});
+
+	it("does not take a bot approval as the human one", async () => {
+		const c = await load(yaml);
+		const wrote = snap({
+			commits: [
+				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
+			],
+			reviews: [
+				{ login: "coderabbitai[bot]", state: "APPROVED", commitId: "abc" },
+			],
+		});
+		expect(rulesOf(run(wrote, c, [], x))).toContain("castellan_written");
+		const human = snap({
+			commits: [
+				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
+			],
+			reviews: [{ login: "bob", state: "APPROVED", commitId: "abc" }],
+		});
+		expect(rulesOf(run(human, c, [], x))).not.toContain("castellan_written");
+	});
+
+	it("treats a commit list the API cut short as castellan having written", async () => {
+		// The list holds at most 250, oldest first, so the newest commits (which are
+		// castellan's) can be missing: that must not read as "it wrote nothing".
+		const c = await load(yaml);
+		const cut = snap({ commits: [], commitsTruncated: true });
+		expect(rulesOf(run(cut, c, [], x))).toContain("castellan_written");
 	});
 
 	it("mode off comes after the other skip rules and before escalation", async () => {

@@ -31,7 +31,15 @@
 			}
 		],
 		"reviews": [],
-		"codeRabbit": null
+		"codeRabbit": null,
+		"commits": [
+			{
+				"logins": [],
+				"message": "feat: thing"
+			}
+		],
+		"baseRepoId": 1,
+		"headRepoId": 1
 	},
 	"context": {
 		"defaultBranch": "main",

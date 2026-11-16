@@ -8,8 +8,9 @@ import {
 } from "./central.js";
 import type { Brief } from "./comment.js";
 import { type Config, githubReader, loadConfig } from "./config.js";
-import { rightLines } from "./diff.js";
+import { addedLines, rightLines } from "./diff.js";
 import { readFiles, renderFileContext } from "./files.js";
+import { MAX_COMMITS, planFixes, pushFixes } from "./fix.js";
 import {
 	createGithubClient,
 	type GithubTransport,
@@ -24,9 +25,11 @@ import {
 	type CodeownersRule,
 	type Context,
 	evaluate,
+	FIX_TRAILER,
 	GENERATED,
 	onlySizeEscalates,
 	SIZE_RULES,
+	touchesProtected,
 } from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
@@ -223,6 +226,7 @@ export async function evaluatePull(
 			codeowners,
 			bugIssues,
 			centralPath: centralPathIn(env, repoRef),
+			login,
 		};
 
 		const required = await createGithubClient(
@@ -412,6 +416,52 @@ export async function evaluatePull(
 		key.carry = result?.ok ? undefined : carried;
 		const outcome = decide(decision, result, config.size);
 		if (!outcome) return { status: "skipped" };
+		// A suggestion can be applied, but only by a fresh run that is allowed to
+		// write, only to an escalation (a merge needs no fix), and only to the code
+		// the model actually saw at this head. A cached verdict is not a new review,
+		// so a sweep does not repeat a push that already failed.
+		const mayWrite =
+			!opts.dryRun &&
+			config.mode === "enforce" &&
+			config.fix.pushes &&
+			outcome.verdict === "escalate" &&
+			dedup.source === "llm" &&
+			!!result?.ok;
+		const fixes = mayWrite
+			? await pushFixes(transport, repoRef, {
+					head: snapshot.headSha,
+					headRef: snapshot.headRef,
+					headRepoId: snapshot.headRepoId,
+					baseRepoId: snapshot.baseRepoId,
+					baseRef: snapshot.baseRef,
+					defaultBranch,
+					// A cut commit list may hide the newest ones, so it counts as the cap.
+					castellanCommits: snapshot.commitsTruncated
+						? MAX_COMMITS
+						: snapshot.commits.filter(
+								(c) => FIX_TRAILER.test(c.message) || c.logins.includes(login),
+							).length,
+					fixes: planFixes(result, addedLines(snapshot.diff), {
+						changed: new Set(
+							snapshot.files
+								.filter((f) => f.status !== "removed")
+								.map((f) => f.path),
+						),
+						protectedPath: (path) =>
+							touchesProtected(
+								{
+									...snapshot,
+									files: [
+										{ path, status: "modified", additions: 1, deletions: 0 },
+									],
+								},
+								config,
+								ctx,
+							),
+						limit: config.fix.maxFixes,
+					}),
+				})
+			: undefined;
 		// Only a model finding can be anchored: a rule reason has no line in the diff.
 		const inline = result?.ok
 			? planInline(result.verdict.reasons, rightLines(snapshot.diff))
@@ -437,6 +487,7 @@ export async function evaluatePull(
 				repoRef.owner,
 			),
 			related: related.length ? related : undefined,
+			fixes,
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {

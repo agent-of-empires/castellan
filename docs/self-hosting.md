@@ -51,7 +51,7 @@ Create an App, install it on the repos in `CASTELLAN_REPOS`, and set:
 - **Events:** `pull_request`, `check_suite`, `pull_request_review`, `status`, `issues`.
 - **Repository permissions**, from the API calls the code makes:
   - Metadata: read.
-  - Contents: read (the config, CODEOWNERS, and the post-image of the changed files the model reads). The immediate merge fallback calls the merge endpoint, which GitHub documents as needing Contents: write; grant it for `enforce`.
+  - Contents: read (the config, CODEOWNERS, and the post-image of the changed files the model reads). The immediate merge fallback calls the merge endpoint, which GitHub documents as needing Contents: write; grant it for `enforce`. `fix.pushes` also needs Contents: write for the git data endpoints (`git/commits`, `git/trees`, `git/blobs`) and for `createCommitOnBranch`; without it every push fails quietly and the suggestion stays a comment, which is the documented fallback.
   - Pull requests: write (read PRs, files, reviews and review comments; post reviews; request reviewers and team reviewers; approve; enable auto-merge).
   - Issues: write (sticky comment, triage comments and labels).
   - Commit statuses: write (the `castellan` status).

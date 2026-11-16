@@ -4,6 +4,9 @@
  */
 export type DiffLines = Map<string, Set<number>>;
 
+/** The text of each added line, per path, keyed by new-side line number. */
+export type DiffAdditions = Map<string, Map<number, string>>;
+
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 export function rightLines(diff: string): DiffLines {
@@ -44,6 +47,52 @@ export function rightLines(diff: string): DiffLines {
 		if (raw.startsWith("-")) continue;
 		// Context and added lines both exist on the new side.
 		out.get(path)?.add(line);
+		line++;
+	}
+	return out;
+}
+
+/**
+ * The added lines of a unified diff, with their text, so a suggestion can be
+ * checked against the line it claims to replace.
+ */
+export function addedLines(diff: string): DiffAdditions {
+	const out: DiffAdditions = new Map();
+	let path: string | null = null;
+	let line = 0;
+	// An added source line can read `+++ b/x`, so a header only counts before the
+	// first hunk of its file; inside one it is text, and a fix must not follow it.
+	let inHunk = false;
+	for (const raw of diff.split("\n")) {
+		if (raw.startsWith("diff --git ")) {
+			path = null;
+			line = 0;
+			inHunk = false;
+			continue;
+		}
+		if (!inHunk && raw.startsWith("+++ ")) {
+			const p = raw.slice(4).split("\t")[0]?.trim() ?? "";
+			const name = p.replace(/^b\//, "");
+			path = !name || name === "/dev/null" ? null : name;
+			continue;
+		}
+		if (!inHunk && raw.startsWith("--- ")) continue;
+		const hunk = HUNK.exec(raw);
+		if (hunk?.[1]) {
+			line = Number(hunk[1]);
+			inHunk = true;
+			continue;
+		}
+		if (path === null) continue;
+		if (raw.startsWith("\\")) continue;
+		if (raw.startsWith("+")) {
+			const added = out.get(path) ?? new Map<number, string>();
+			added.set(line, raw.slice(1));
+			out.set(path, added);
+			line++;
+			continue;
+		}
+		if (raw.startsWith("-")) continue;
 		line++;
 	}
 	return out;

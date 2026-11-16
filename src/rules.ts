@@ -30,6 +30,8 @@ export interface Context {
 	bugIssues: number[];
 	/** Path of the shared central config when this repo hosts it. */
 	centralPath?: string;
+	/** Castellan's own login, so a commit it wrote can be recognised. */
+	login?: string;
 }
 
 type Hit = { text: string; path?: string };
@@ -97,6 +99,41 @@ const lines = (s: Snapshot) =>
 	s.files.reduce((n, f) => n + f.additions + f.deletions, 0);
 
 const isBot = (login: string) => login.endsWith("[bot]");
+
+/** The trailer castellan puts on a fix commit, so the commit says who wrote it. */
+export const FIX_TRAILER = /^castellan-fix:/m;
+
+/**
+ * A commit on this PR that castellan wrote: its login as author or committer, or
+ * the trailer, which survives an unmapped email. Checked on every commit, not
+ * just the head, so a later author commit does not launder it.
+ */
+export function castellanWrote(s: Snapshot, login?: string): boolean {
+	// A cut commit list drops the newest commits, which are the ones castellan
+	// wrote, so an incomplete list is treated as if it wrote one.
+	return (
+		s.commitsTruncated ||
+		s.commits.some(
+			(c) =>
+				FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
+		)
+	);
+}
+
+/**
+ * A human approval on the current head, which is what lets castellan's own code
+ * merge. A bot approval is not one: an App or Action can approve without a person,
+ * so counting it would let the writer judge its own commit.
+ */
+export function humanApprovedHead(s: Snapshot, login?: string): boolean {
+	return s.reviews.some(
+		(r) =>
+			r.state === "APPROVED" &&
+			r.commitId === s.headSha &&
+			r.login !== login &&
+			!isBot(r.login),
+	);
+}
 
 function humanChangesRequested(s: Snapshot) {
 	const latest = new Map<string, string>();
@@ -269,6 +306,13 @@ const ESCALATE: Record<string, Rule> = {
 		when(
 			s.files.length > 0 && s.files.every((f) => GENERATED.test(f.path)),
 			"only generated files changed",
+		),
+	// The writer is not the judge: code castellan committed never merges on its
+	// own verdict, whatever the model says about it.
+	castellan_written: (s, _c, _r, x) =>
+		when(
+			castellanWrote(s, x.login) && !humanApprovedHead(s, x.login),
+			"castellan wrote a commit on this head and no human approved it",
 		),
 	human_changes_requested: (s) =>
 		humanChangesRequested(s).map(([login]) => ({

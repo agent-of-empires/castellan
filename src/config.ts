@@ -1,5 +1,6 @@
 import { parse } from "yaml";
 import { z } from "zod";
+import { MAX_FIXES } from "./fix.js";
 import type { GithubTransport, Repo } from "./github.js";
 
 export const CONFIG_PATH = ".castellan.yml";
@@ -62,6 +63,18 @@ const base = z.strictObject({
 		})
 		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
+	/** Writing to the branch, which is the one thing castellan does not only read. */
+	fix: z
+		.strictObject({
+			pushes: z
+				.boolean()
+				.default(false)
+				.describe(
+					"Apply the review's one line suggestions as a commit on the PR branch. Enforce only.",
+				),
+			maxFixes: z.number().int().positive().max(MAX_FIXES).default(MAX_FIXES),
+		})
+		.prefault({}),
 	skip_branches: z
 		.array(z.string())
 		.default(["release-staging/*", "release-plz-*"])
