@@ -36,6 +36,36 @@ describe("ownedTeam", () => {
 	it("returns nothing without CODEOWNERS", () => {
 		expect(ownedTeam(["src/a.ts"], [])).toBeUndefined();
 	});
+
+	it("skips a team owned by another org, which this repo cannot request", () => {
+		expect(
+			ownedTeam(
+				["src/a.ts"],
+				[
+					{
+						pattern: "*",
+						owners: ["@someone/platform"],
+					},
+				],
+				"o",
+			),
+		).toBeUndefined();
+	});
+
+	it("takes the first team that owns a file in this repo", () => {
+		expect(
+			ownedTeam(
+				["src/a.ts"],
+				[
+					{
+						pattern: "src/**",
+						owners: ["@someone/platform", "@o/codegen"],
+					},
+				],
+				"o",
+			),
+		).toBe("codegen");
+	});
 });
 
 describe("requestReviewers", () => {
@@ -103,7 +133,7 @@ describe("requestReviewers", () => {
 		expect(request).not.toHaveBeenCalled();
 	});
 
-	it("swallows a failure so the escalation still lands", async () => {
+	it("reports a failure so the caller retries, without failing the run", async () => {
 		const { transport: t } = transport(new Error("422"));
 		await expect(
 			requestReviewers(t, { owner: "o", repo: "r" }, 3, {
@@ -111,7 +141,31 @@ describe("requestReviewers", () => {
 				users: [],
 				author: "alice",
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toBe(false);
+	});
+
+	it("reports success only when every request landed", async () => {
+		const { transport: t } = transport();
+		await expect(
+			requestReviewers(t, { owner: "o", repo: "r" }, 3, {
+				team: "platform",
+				users: [],
+				author: "alice",
+			}),
+		).resolves.toBe(true);
+	});
+
+	it("drops the org from a team that already carries it", async () => {
+		const { request, transport: t } = transport();
+		await requestReviewers(t, { owner: "o", repo: "r" }, 3, {
+			team: "o/platform",
+			users: [],
+			author: "alice",
+		});
+		expect(request).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ team_reviewers: ["platform"] }),
+		);
 	});
 });
 

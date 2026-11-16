@@ -1,23 +1,29 @@
 import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
-import { type CodeownersRule, matchesPath } from "./rules.js";
+import { type CodeownersRule, matchesPath, slug } from "./rules.js";
 
-const TEAM = /^@[^/]+\/.+$/;
+const TEAM = /^@([^/]+)\/(.+)$/;
 
 /**
  * The team that owns the change, from CODEOWNERS: for each changed file, the
  * last rule that matches, and that rule's first team owner. A plain `@user`
- * owner is not a team and is skipped, so an escalation is asked of the team
- * that owns the code rather than of the whole maintainer group.
+ * owner is not a team, and a team of another org cannot be requested on this
+ * repo, so both are skipped: an escalation is asked of a team that owns the code
+ * here rather than of the whole maintainer group.
  */
 export function ownedTeam(
 	files: string[],
 	codeowners: CodeownersRule[],
+	owner?: string,
 ): string | undefined {
 	for (const path of files) {
 		const rule = codeowners.findLast((r) => matchesPath(r.pattern, path));
-		const owner = rule?.owners.find((o) => TEAM.test(o));
-		if (owner) return owner.slice(owner.indexOf("/") + 1);
+		for (const o of rule?.owners ?? []) {
+			const team = TEAM.exec(o);
+			if (!team?.[1] || !team[2]) continue;
+			if (owner && team[1].toLowerCase() !== owner.toLowerCase()) continue;
+			return slug(team[2]);
+		}
 	}
 	return undefined;
 }
@@ -34,7 +40,7 @@ export async function requestReviewers(
 	{ owner, repo }: Repo,
 	pullNumber: number,
 	{ team, users, author }: { team?: string; users: string[]; author: string },
-): Promise<void> {
+): Promise<boolean> {
 	const reviewers = users.filter(
 		(u) => u && u.toLowerCase() !== author.toLowerCase(),
 	);
@@ -47,12 +53,19 @@ export async function requestReviewers(
 				"POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
 				{ owner, repo, pull_number: pullNumber, ...body },
 			);
+			return true;
 		} catch (err) {
+			// A request that failed must be retried on the next event, so the caller
+			// records the head only when this returns true.
 			console.warn("requesting a review failed", { error: String(err) });
+			return false;
 		}
 	};
-	if (team) await ask({ team_reviewers: [team] });
-	if (reviewers.length) await ask({ reviewers });
+	const asked = [
+		...(team ? [await ask({ team_reviewers: [slug(team)] })] : []),
+		...(reviewers.length ? [await ask({ reviewers })] : []),
+	];
+	return asked.length > 0 && asked.every(Boolean);
 }
 
 /** The CODEOWNERS team if there is one, then `reviewers.team`, plus every `reviewers.users`. */
