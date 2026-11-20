@@ -4,6 +4,7 @@
  */
 import { type CacheKey, serializeBlock } from "./cache.js";
 import type { FailureReason, OkReviewResult } from "./llm.js";
+import type { RelatedPr } from "./related.js";
 import type { InlineFinding } from "./review.js";
 import type { Snapshot } from "./snapshot.js";
 import type { Outcome } from "./verdict.js";
@@ -39,6 +40,8 @@ export interface Brief {
 	shadow?: boolean;
 	/** Plain team slug; never rendered as a mention. */
 	ownerTeam?: string;
+	/** Open PRs changing the same files; advisory only, never part of the verdict. */
+	related?: RelatedPr[];
 }
 
 /** Makes untrusted text inert in a GitHub comment: no mentions, links, URLs, HTML or dashes. */
@@ -190,6 +193,15 @@ export function renderComment(brief: Brief): string {
 		...(brief.threadsCapped
 			? [
 					"- Review threads changed after this head used up its re-run budget: the earlier verdict stands.",
+				]
+			: []),
+		// The number only: another author's title is third party text that would be
+		// rendered here, and GitHub shows the title on hover anyway.
+		...(brief.related?.length
+			? [
+					`- Open PRs that share files with this PR: ${brief.related
+						.map((r) => `#${r.number}`)
+						.join(", ")}`,
 				]
 			: []),
 		...(brief.inline?.length
