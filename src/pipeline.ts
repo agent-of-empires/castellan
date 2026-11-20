@@ -9,6 +9,7 @@ import {
 import type { Brief } from "./comment.js";
 import { type Config, githubReader, loadConfig } from "./config.js";
 import { rightLines } from "./diff.js";
+import { readFiles, renderFileContext } from "./files.js";
 import {
 	createGithubClient,
 	type GithubTransport,
@@ -17,7 +18,12 @@ import {
 import { type LlmDeps, promptHash, review } from "./llm.js";
 import { planInline } from "./review.js";
 import { ownedTeam } from "./reviewers.js";
-import { type CodeownersRule, type Context, evaluate } from "./rules.js";
+import {
+	type CodeownersRule,
+	type Context,
+	evaluate,
+	GENERATED,
+} from "./rules.js";
 import { type AuthorClass, buildSnapshot } from "./snapshot.js";
 import {
 	findStickyComment,
@@ -316,6 +322,24 @@ export async function evaluatePull(
 			run: async () => {
 				const linked = snapshot.linkedIssues[0];
 				const issue = linked ? await getIssue(env, repoRef, linked) : null;
+				// Read at the head: the post-image is what the change would merge as, and
+				// the cache key already holds the head sha, so this never goes stale.
+				const files = await readFiles(
+					transport,
+					repoRef,
+					snapshot.headSha,
+					// Removed, generated and unchanged-size (binary or pure rename) paths
+					// are skipped without a request, and the files with the most changed
+					// lines come first so the attempt cap is spent where it matters.
+					snapshot.files
+						.filter((f) => f.status !== "removed")
+						.filter((f) => f.additions + f.deletions > 0)
+						.filter((f) => !GENERATED.test(f.path))
+						.sort(
+							(a, b) => b.additions + b.deletions - (a.additions + a.deletions),
+						)
+						.map((f) => f.path),
+				);
 				const result = await review(
 					{
 						title: snapshot.title,
@@ -323,6 +347,7 @@ export async function evaluatePull(
 						diff: snapshot.diff,
 						linkedIssueBody: issue?.body ?? undefined,
 						threads: rendered.text,
+						files: renderFileContext(files),
 					},
 					config,
 					env.llm,
