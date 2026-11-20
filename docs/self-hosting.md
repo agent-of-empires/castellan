@@ -52,7 +52,7 @@ Create an App, install it on the repos in `CASTELLAN_REPOS`, and set:
 - **Repository permissions**, from the API calls the code makes:
   - Metadata: read.
   - Contents: read (config and CODEOWNERS). The immediate merge fallback calls the merge endpoint, which GitHub documents as needing Contents: write; grant it for `enforce`.
-  - Pull requests: write (read PRs, files and reviews; approve; enable auto-merge).
+  - Pull requests: write (read PRs, files, reviews and review comments; post reviews; request reviewers and team reviewers; approve; enable auto-merge).
   - Issues: write (sticky comment, triage comments and labels).
   - Commit statuses: write (the `castellan` status).
   - Checks: read (check runs on the head SHA).

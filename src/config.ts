@@ -44,6 +44,16 @@ const base = z.strictObject({
 				),
 		})
 		.prefault({}),
+	/** Who an escalation asks for a review. Empty means nobody is added. */
+	reviewers: z
+		.strictObject({
+			team: z
+				.string()
+				.optional()
+				.describe("Team slug requested when no CODEOWNERS rule names one."),
+			users: z.array(z.string()).default([]),
+		})
+		.prefault({}),
 	trustedAuthors: z.array(z.string()).default([]),
 	skip_branches: z
 		.array(z.string())
