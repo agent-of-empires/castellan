@@ -25,10 +25,11 @@ const load = async (yaml: string): Promise<Config> => {
 	return r.config;
 };
 
-const snapshot = (paths: string[] = ["src/a.ts"]) =>
+const snapshot = (paths: string[] = ["src/a.ts"], diff = "") =>
 	({
 		headSha: "head1",
 		author: "alice",
+		diff,
 		files: paths.map((path) => ({
 			path,
 			status: "modified",
@@ -140,6 +141,7 @@ const run = async (
 	w: World = {},
 	over: {
 		files?: string[];
+		diff?: string;
 		verdict?: "merge" | "escalate";
 		brief?: Brief;
 	} = {},
@@ -147,7 +149,7 @@ const run = async (
 	const f = fake(w);
 	const result = await act(f.transport, repo, {
 		pullNumber: 3,
-		snapshot: snapshot(over.files),
+		snapshot: snapshot(over.files, over.diff),
 		config: await load(yaml),
 		ctx,
 		brief: over.brief ?? brief(over.verdict),
@@ -212,6 +214,46 @@ describe("an earlier blocker", () => {
 });
 
 describe("inline findings", () => {
+	/** The finding in `modelBrief` is anchored to line 2 of `src/a.ts`. */
+	const diff = (marker: string) =>
+		[
+			"diff --git a/src/a.ts b/src/a.ts",
+			"--- a/src/a.ts",
+			"+++ b/src/a.ts",
+			"@@ -1,3 +1,3 @@",
+			" one",
+			`${marker}two`,
+			" three",
+		].join("\n");
+	const suggestion = () => {
+		const b = modelBrief("escalate");
+		const reason = b.review?.verdict.reasons[0];
+		if (reason) reason.suggestion = "const port = 443;";
+		return b;
+	};
+	const commentBodies = (sent: (route: string) => { comments?: unknown[] }[]) =>
+		(sent(APPROVE)[0]?.comments ?? []).map((c) => (c as { body: string }).body);
+
+	it("offers a suggestion on a line the diff adds", async () => {
+		const { sent } = await run(
+			"mode: shadow\nreview: { inline: true }",
+			{},
+			{ brief: suggestion(), diff: diff("+") },
+		);
+		expect(commentBodies(sent)[0]).toContain(
+			"```suggestion\nconst port = 443;\n```",
+		);
+	});
+
+	it("keeps the finding but drops the button on a context line", async () => {
+		const { sent } = await run(
+			"mode: shadow\nreview: { inline: true }",
+			{},
+			{ brief: suggestion(), diff: diff(" ") },
+		);
+		expect(commentBodies(sent)[0]).toBe("the port is not recorded");
+	});
+
 	it("posts a comment review with the anchored finding in shadow", async () => {
 		const { request, sent, result } = await run(
 			"mode: shadow\nreview: { inline: true }",

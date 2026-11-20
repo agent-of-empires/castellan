@@ -47,6 +47,14 @@ describe("inlineComments", () => {
 		{ severity: "blocker", text: "must fix" },
 		{ severity: "nit", text: "prefer @someone and <b>" },
 	];
+	/** Lines 1 to 3 of each path count as added, and nothing is barred. */
+	const scope = (
+		barred: (path: string) => boolean = () => false,
+		paths = ["p", "src/a.ts"],
+	) => ({
+		added: new Map(paths.map((p) => [p, new Set([1, 2, 3])])),
+		barred,
+	});
 
 	it("labels a nit and leaves the rest unlabelled", () => {
 		const out = inlineComments(
@@ -55,6 +63,7 @@ describe("inlineComments", () => {
 				{ index: 1, path: "src/a.ts", line: 3 },
 			],
 			reasons,
+			scope(),
 		);
 		expect(out).toEqual([
 			{ index: 0, path: "src/a.ts", line: 2, body: "must fix" },
@@ -77,6 +86,7 @@ describe("inlineComments", () => {
 					suggestion: "if (!x) return;",
 				},
 			],
+			scope(),
 		);
 		expect(out[0]?.body).toBe(
 			"guard it\n\n```suggestion\nif (!x) return;\n```",
@@ -93,6 +103,7 @@ describe("inlineComments", () => {
 					suggestion: "// call @bob <b>",
 				},
 			],
+			scope(),
 		);
 		expect(out[0]?.body).toContain("// call @bob <b>");
 	});
@@ -113,20 +124,69 @@ describe("inlineComments", () => {
 			"if (role \u202e=== 'admin'\u2066) {",
 			"zero\u200bwidth",
 			"nul\u0000byte",
+			// Default ignorable: renders as nothing, commits a different identifier.
+			'if (role === "admin\u034f") {',
+			'if (role === "admin\ufe0f") {',
+			"hangul\u3164filler",
+			"braille\u2800blank",
+			// Any space that is not U+0020: NBSP, figure space, ideographic space.
+			"no\u00a0break",
+			"figure\u2007space",
+			"wide\u3000space",
 		].map(
 			(suggestion) =>
 				inlineComments(
 					[{ index: 0, path: "p", line: 1 }],
 					[{ severity: "nit", text: "t", suggestion }],
+					scope(),
 				)[0]?.body,
 		);
 		for (const body of bodies) expect(body).toBe("nit: t");
 	});
 
-	it("drops a finding the reason list no longer holds", () => {
-		expect(inlineComments([{ index: 5, path: "p", line: 1 }], reasons)).toEqual(
-			[],
+	it("keeps a tab, the one control character indentation needs", () => {
+		const out = inlineComments(
+			[{ index: 0, path: "p", line: 1 }],
+			[{ severity: "nit", text: "t", suggestion: "\tif (!x) return;" }],
+			scope(),
 		);
+		expect(out[0]?.body).toContain("```suggestion\n\tif (!x) return;\n```");
+	});
+
+	it("keeps the finding but drops the button off an added line", () => {
+		const finding = [{ index: 0, path: "p", line: 99 }];
+		const out = inlineComments(
+			finding,
+			[{ severity: "nit", text: "t", suggestion: "x" }],
+			scope(),
+		);
+		expect(out[0]?.body).toBe("nit: t");
+	});
+
+	it("keeps the finding but drops the button on a barred path", () => {
+		const findings = [
+			{ index: 0, path: ".github/workflows/ci.yml", line: 1 },
+			{ index: 1, path: "src/a.ts", line: 1 },
+		];
+		const out = inlineComments(
+			findings,
+			[
+				{ severity: "nit", text: "a", suggestion: "run: make" },
+				{ severity: "nit", text: "b", suggestion: "let y = 1;" },
+			],
+			scope(
+				(path) => path.startsWith(".github/"),
+				[".github/workflows/ci.yml", "src/a.ts"],
+			),
+		);
+		expect(out[0]?.body).toBe("nit: a");
+		expect(out[1]?.body).toContain("```suggestion\nlet y = 1;\n```");
+	});
+
+	it("drops a finding the reason list no longer holds", () => {
+		expect(
+			inlineComments([{ index: 5, path: "p", line: 1 }], reasons, scope()),
+		).toEqual([]);
 	});
 });
 

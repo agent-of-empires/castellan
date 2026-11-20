@@ -31,23 +31,42 @@ type Finding = {
 export const MAX_SUGGESTION = 300;
 
 /**
+ * Control, format and separator characters, plus the default-ignorable code
+ * points: bidi, zero width, U+2028, CR, NUL, the combining, variation-selector
+ * and filler characters, and every space that is not U+0020, which is stripped
+ * before the test along with tab. U+2800 renders as blank and is named because
+ * no class covers it.
+ */
+const UNSAFE =
+	/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}\p{Default_Ignorable_Code_Point}\u2800]/u;
+
+/**
  * The suggestion as GitHub needs it: one line, nothing that could end the code
  * fence or forge castellan's own marker. A rejected suggestion costs the
  * finding only its button, so the text still posts.
  */
-/** Control, format and line-separator characters: bidi, zero width, U+2028, CR, NUL. */
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-
 export function suggestionText(raw?: string): string | undefined {
 	if (raw === undefined) return undefined;
 	// This string becomes repository bytes after one click, so anything invisible is
 	// refused rather than stripped: a bare CR is a line break in CommonMark, and a
 	// U+2028 or a bidi override changes what the author reads versus what they commit.
-	if (UNSAFE.test(raw.replace(/\t/g, ""))) return undefined;
+	if (UNSAFE.test(raw.replace(/[ \t]/g, ""))) return undefined;
 	if (!raw.trim() || raw.length > MAX_SUGGESTION) return undefined;
 	if (raw.includes("```")) return undefined;
 	if (raw.toLowerCase().includes("<!--")) return undefined;
 	return raw;
+}
+
+/**
+ * Where a suggestion may be offered: a line the PR adds, on a path a fix may
+ * write. Both are the caller's to decide, so a miscounted anchor on a context
+ * line, or a governance file, keeps the finding and loses only the button.
+ */
+export interface SuggestScope {
+	/** New-side lines the diff adds, per path. */
+	added: DiffLines;
+	/** True for a path a fix must not write: governance files and protected paths. */
+	barred: (path: string) => boolean;
 }
 
 /**
@@ -78,6 +97,7 @@ export function planInline(
 export function inlineComments(
 	findings: InlineFinding[],
 	reasons: Finding[],
+	scope: SuggestScope,
 ): InlineComment[] {
 	return findings.flatMap(({ index, path, line }) => {
 		const r = reasons[index];
@@ -87,7 +107,10 @@ export function inlineComments(
 		// Code is not escaped: escaping would change what the author commits. It
 		// stays inside the fence, and suggestionText already refused anything that
 		// could break out of it or smuggle an invisible instruction into the line.
-		const fix = suggestionText(r.suggestion);
+		const fix =
+			scope.added.get(path)?.has(line) && !scope.barred(path)
+				? suggestionText(r.suggestion)
+				: undefined;
 		const body = fix
 			? `${prefix}${text}\n\n\`\`\`suggestion\n${fix}\n\`\`\``
 			: `${prefix}${text}`;
