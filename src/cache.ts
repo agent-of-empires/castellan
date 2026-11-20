@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
 	type OkReviewResult,
 	type ReviewResult,
+	reasonSchema,
+	type Verdict,
 	verdictSchema,
 } from "./llm.js";
 
@@ -17,6 +19,10 @@ const blockSchema = z.strictObject({
 	threadReruns: z.number().int().min(0).optional(),
 	/** Head SHA whose escalation already asked for reviewers, so a sweep does not ask again. */
 	requested: z.string().optional(),
+	/** Findings carried to the next head, kept even when a head's model run failed. */
+	carry: z
+		.strictObject({ sha: z.string(), reasons: z.array(reasonSchema) })
+		.optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -45,6 +51,8 @@ export interface CacheKey {
 	threadReruns?: number;
 	/** Head SHA whose escalation already asked for reviewers. */
 	requested?: string;
+	/** Findings carried forward from an earlier head. */
+	carry?: { sha: string; reasons: Verdict["reasons"] };
 }
 
 export const MARKER = "<!-- castellan";

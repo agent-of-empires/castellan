@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { serializeBlock } from "../src/cache.js";
 import type { GithubTransport } from "../src/github.js";
 import type { MessagesClient } from "../src/llm.js";
 import { evaluatePull, listWork, triageIssue } from "../src/pipeline.js";
@@ -40,6 +41,8 @@ interface World {
 	/** CODEOWNERS content; `yaml` stands in for it when unset. */
 	codeowners?: string;
 	files?: SnapshotFile[];
+	/** Issue comments, e.g. castellan's own sticky comment. */
+	comments?: { id: number; body: string; user: { login: string } }[];
 }
 
 function world({
@@ -61,7 +64,10 @@ function world({
 			deletions: 1,
 		},
 	],
+	comments = [],
 }: World = {}) {
+	/** Mutated by a test to move the PR to a new head between runs. */
+	const headState = { head: "head1" };
 	const posted = new Map<string, unknown>();
 	let sticky: string | null = stickyBody ?? null;
 	const request = vi.fn(
@@ -101,7 +107,7 @@ function world({
 						node_id: "PR_1",
 						auto_merge: null,
 						base: { ref: "main", sha: "base1" },
-						head: { ref: "feat/x", sha: "head1" },
+						head: { ref: "feat/x", sha: headState.head },
 					},
 				};
 			}
@@ -119,12 +125,16 @@ function world({
 		},
 	);
 	const paginate = vi.fn(async (route: string): Promise<unknown[]> => {
+		if (route.endsWith("/comments")) {
+			if (comments.length) return comments;
+			if (sticky) {
+				return [{ id: 7, user: { login: "castellan[bot]" }, body: sticky }];
+			}
+			return [];
+		}
 		if (route.endsWith("/files")) return files;
 		if (route.endsWith("/check-runs")) {
 			return checks;
-		}
-		if (route.endsWith("/comments") && sticky) {
-			return [{ id: 7, user: { login: "castellan[bot]" }, body: sticky }];
 		}
 		if (route.endsWith("/rules/branches/{branch}")) {
 			return [
@@ -161,7 +171,7 @@ function world({
 			| undefined;
 		return args?.[call]?.[0]?.messages?.[0]?.content ?? "";
 	};
-	return { env, request, paginate, graphql, create, routes, sent };
+	return { env, request, paginate, graphql, create, routes, sent, headState };
 }
 
 describe("evaluatePull", () => {
@@ -212,6 +222,164 @@ describe("evaluatePull", () => {
 		const w = world({ codeowners: "src/ @o/platform\n" });
 		const r = await evaluatePull(w.env, repo, 3);
 		expect(r.brief?.ownerTeam).toBe("platform");
+	});
+
+	it("carries the previous head's findings into the model input", async () => {
+		const w = world({
+			comments: [
+				{
+					id: 1,
+					user: { login: "castellan[bot]" },
+					body: `brief\n\n${serializeBlock({
+						verdict: "escalate",
+						headSha: "oldhead",
+						promptHash: "old",
+						model: "old-model",
+						llm: {
+							ok: true,
+							verdict: {
+								intent_match: true,
+								new_behavior: false,
+								reasons: [
+									{ severity: "concern", text: "the retry cap is gone" },
+								],
+							},
+							usage: { inputTokens: 1, outputTokens: 1 },
+							costUsd: 0,
+						},
+					})}`,
+				},
+			],
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent()).toContain("BEGIN previousFindings");
+		expect(w.sent()).toContain("the retry cap is gone");
+		expect(w.sent()).toContain("at oldhead");
+	});
+
+	it("carries findings forward after a head whose model run failed", async () => {
+		const w = world({
+			comments: [
+				{
+					id: 1,
+					user: { login: "castellan[bot]" },
+					body: `brief\n\n${serializeBlock({
+						verdict: "escalate",
+						headSha: "head1",
+						promptHash: "old",
+						model: "old-model",
+						carry: {
+							sha: "oldhead",
+							reasons: [
+								{ severity: "blocker", text: "the lock is never released" },
+							],
+						},
+					})}`,
+				},
+			],
+		});
+		await evaluatePull(w.env, repo, 3);
+		// The head has no llm part of its own, so the carried finding is what the
+		// model sees, and it is written forward instead of being dropped.
+		expect(w.sent()).toContain("the lock is never released");
+		expect(w.sent()).toContain("at oldhead");
+	});
+
+	it("carries a finding across a head whose model run failed", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		const body = () =>
+			String(
+				w.request.mock.calls
+					.filter((c) => c[0] === COMMENT || c[0] === PATCH_COMMENT)
+					.at(-1)?.[1]?.body,
+			);
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						...verdict,
+						reasons: [
+							{
+								severity: "blocker",
+								text: "the lock is never released",
+								path: "src/a.ts",
+								line: 2,
+							},
+						],
+					}),
+				},
+			],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		// An ok run stores its reasons in `llm`, so the block carries no second copy.
+		expect(body()).not.toContain('"carry"');
+
+		w.headState.head = "head2";
+		w.create.mockRejectedValue(new Error("model down"));
+		await evaluatePull(w.env, repo, 3);
+		// The head with no model run writes the earlier finding forward.
+		expect(body()).toContain('"carry"');
+
+		w.headState.head = "head3";
+		w.create.mockResolvedValue({
+			content: [{ type: "text", text: JSON.stringify(verdict) }],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.sent(w.create.mock.calls.length - 1)).toContain(
+			"the lock is never released",
+		);
+	});
+
+	it("still carries an earlier head's findings on a same-head re-run", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.create.mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: true,
+						new_behavior: false,
+						reasons: [{ severity: "concern", text: "the retry cap is gone" }],
+					}),
+				},
+			],
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: [
+							{
+								id: "T_1",
+								isResolved: false,
+								isOutdated: false,
+								comments: {
+									nodes: [
+										{
+											author: { __typename: "User", login: "someone" },
+											path: "src/a.ts",
+											line: 1,
+											body: "please check this",
+										},
+									],
+								},
+							},
+						],
+					},
+				},
+			},
+		});
+		await evaluatePull(w.env, repo, 3);
+		// A thread change re-runs the model on the same head; the earlier run's
+		// findings must not disappear from the input just because the head matched.
+		expect(w.sent(1)).toContain("BEGIN previousFindings");
+		expect(w.sent(1)).toContain("the retry cap is gone");
 	});
 
 	it("gives the model the changed files as they read at the head", async () => {
