@@ -35,6 +35,7 @@ Both paths run the same pipeline and read the same `.castellan.yml`. Full guide:
 - [docs/configuration.md](docs/configuration.md): every `.castellan.yml` key with its default, and the behaviors that are not configurable.
 - [docs/security.md](docs/security.md): the veto-only model, base-branch policy, webhook HMAC, identity and prompt injection boundaries.
 - [docs/eval.md](docs/eval.md): replaying closed PRs to measure precision before enforcing.
+- [docs/phase2-config.md](docs/phase2-config.md): design for config sources (repo, central, db), the state table and the dashboard.
 
 ## Development
 
