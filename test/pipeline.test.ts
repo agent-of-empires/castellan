@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { GithubTransport } from "../src/github.js";
 import type { MessagesClient } from "../src/llm.js";
 import { evaluatePull, listWork, triageIssue } from "../src/pipeline.js";
+import { MAX_THREAD_RERUNS } from "../src/threads.js";
 
 const repo = { owner: "o", repo: "r" };
 const COMMENT = "POST /repos/{owner}/{repo}/issues/{issue_number}/comments";
 const APPROVE = "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews";
 const STATUS = "POST /repos/{owner}/{repo}/statuses/{sha}";
+const PATCH_COMMENT =
+	"PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}";
 
 const verdict = { intent_match: true, new_behavior: false, reasons: [] };
 
@@ -22,6 +25,8 @@ interface World {
 	}[];
 	required?: string[];
 	mergeable?: boolean | null;
+	/** A comment body to start from, as a head that already holds a block would. */
+	stickyBody?: string;
 }
 
 function world({
@@ -32,13 +37,19 @@ function world({
 	checks = [{ name: "test", conclusion: "success" }],
 	required = [],
 	mergeable = true,
+	stickyBody,
 }: World = {}) {
 	const posted = new Map<string, unknown>();
+	let sticky: string | null = stickyBody ?? null;
 	const request = vi.fn(
 		async (route: string, params: Record<string, unknown>) => {
 			if (route === STATUS) {
 				posted.set(String(params.context), params);
 				return { data: {} };
+			}
+			if (route === COMMENT || PATCH_COMMENT === route) {
+				sticky = String(params.body ?? "");
+				return { data: { id: 7, html_url: "https://github.com/o/r/pull/3#c" } };
 			}
 			if (route === "GET /repos/{owner}/{repo}/commits/{ref}/status") {
 				return { data: { statuses: [...posted.values()] } };
@@ -96,6 +107,9 @@ function world({
 		if (route.endsWith("/check-runs")) {
 			return checks;
 		}
+		if (route.endsWith("/comments") && sticky) {
+			return [{ id: 7, user: { login: "castellan[bot]" }, body: sticky }];
+		}
 		if (route.endsWith("/rules/branches/{branch}")) {
 			return [
 				{
@@ -124,7 +138,14 @@ function world({
 		llm: { client: { messages: { create } } as unknown as MessagesClient },
 	};
 	const routes = () => request.mock.calls.map((c) => c[0]);
-	return { env, request, paginate, graphql, create, routes };
+	/** The user message of the model call at `call`. */
+	const sent = (call = 0) => {
+		const args = create.mock.calls as unknown as
+			| { messages?: { content?: string }[] }[][]
+			| undefined;
+		return args?.[call]?.[0]?.messages?.[0]?.content ?? "";
+	};
+	return { env, request, paginate, graphql, create, routes, sent };
 }
 
 describe("evaluatePull", () => {
@@ -156,7 +177,10 @@ describe("evaluatePull", () => {
 			APPROVE,
 			expect.objectContaining({ commit_id: "head1", event: "APPROVE" }),
 		);
-		expect(w.graphql).toHaveBeenCalledTimes(1);
+		expect(w.graphql).toHaveBeenCalledWith(
+			expect.stringContaining("enablePullRequestAutoMerge"),
+			expect.anything(),
+		);
 	});
 
 	it("reads config at the base branch ref, not the stale base sha", async () => {
@@ -285,6 +309,169 @@ describe("evaluatePull", () => {
 		w.create.mockRejectedValue(new Error("down"));
 		await evaluatePull(w.env, repo, 3);
 		expect(w.routes()).not.toContain(APPROVE);
+	});
+
+	it("gives the model the unresolved review threads and counts them in the brief", async () => {
+		const w = world();
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: [
+							{
+								id: "T_1",
+								isResolved: false,
+								isOutdated: false,
+								comments: {
+									nodes: [
+										{
+											author: { __typename: "Bot", login: "coderabbitai" },
+											path: "src/a.ts",
+											line: 12,
+											body: "the port is not recorded",
+										},
+									],
+								},
+							},
+						],
+					},
+				},
+			},
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.threads).toBe(1);
+		expect(w.sent()).toContain("reviewThreads");
+		expect(w.sent()).toContain("src/a.ts:12");
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Unresolved review threads checked: 1");
+	});
+
+	it("does not read threads when the model is not going to run", async () => {
+		const w = world({ yaml: "mode: enforce" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.graphql).not.toHaveBeenCalledWith(
+			expect.stringContaining("reviewThreads"),
+			expect.anything(),
+		);
+	});
+
+	it("keeps the cached verdict when the thread read fails on a known head", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		// A failed read is not "no threads": the stored verdict stands.
+		expect(w.create).toHaveBeenCalledTimes(1);
+	});
+
+	it("escalates without a model call when threads fail and nothing is cached", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
+		expect(r.brief?.outcome.reasons[0]?.rule).toBe("threads_unavailable");
+	});
+
+	it("bounds the model runs a head spends on thread changes", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		const thread = (body: string) => ({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: [
+							{
+								id: "T_1",
+								isResolved: false,
+								isOutdated: false,
+								comments: {
+									nodes: [
+										{
+											author: { __typename: "User", login: "outsider" },
+											path: "src/a.ts",
+											line: 12,
+											body,
+										},
+									],
+								},
+							},
+						],
+					},
+				},
+			},
+		});
+		w.graphql.mockResolvedValue(thread("first"));
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		// Each edit changes the key. Only MAX_THREAD_RERUNS edits may pay a model call.
+		for (let i = 0; i < 6; i++) {
+			w.graphql.mockResolvedValue(thread(`edit ${i}`));
+			await evaluatePull(w.env, repo, 3);
+		}
+		expect(w.create).toHaveBeenCalledTimes(1 + MAX_THREAD_RERUNS);
+		// Past the cap the stored verdict stands, so the brief must not claim a model
+		// run read the threads that are there now.
+		const brief = w.request.mock.calls
+			.filter((c) => c[0] === COMMENT || c[0] === PATCH_COMMENT)
+			.map((c) => String(c[1]?.body))
+			.at(-1) as string;
+		expect(brief).not.toContain("Unresolved review threads checked");
+		expect(brief).toContain("used up its re-run budget");
+	});
+
+	it("counts the threads the reader capped out of the brief", async () => {
+		const w = world({ yaml: "mode: shadow" });
+		w.graphql.mockResolvedValue({
+			repository: {
+				pullRequest: {
+					reviewThreads: {
+						pageInfo: { hasNextPage: false, endCursor: null },
+						nodes: Array.from({ length: 30 }, (_, i) => ({
+							id: `T_${i}`,
+							isResolved: false,
+							isOutdated: false,
+							comments: {
+								nodes: [
+									{
+										author: { __typename: "User", login: `rev${i}` },
+										path: "src/a.ts",
+										line: 12,
+										body: `finding ${i}`,
+									},
+								],
+							},
+						})),
+					},
+				},
+			},
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		// 25 reach the field, and the 5 the reader dropped are stated, not lost.
+		expect(r.brief?.threads).toBe(25);
+		expect(r.brief?.threadsDropped).toBe(5);
+		const body = w.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		expect(body).toContain("Unresolved review threads not sent: 5");
+	});
+
+	it("keeps a block written before threads existed when the read fails", async () => {
+		const first = world({ yaml: "mode: shadow" });
+		await evaluatePull(first.env, repo, 3);
+		const body = first.request.mock.calls.find((c) => c[0] === COMMENT)?.[1]
+			?.body as string;
+		// An older block has no `threads` key at all.
+		const old = body.replace(/,"threads":"[^"]*"/, "");
+		expect(old).not.toContain('"threads"');
+		const w = world({ yaml: "mode: shadow", stickyBody: old });
+		w.graphql.mockRejectedValue(new Error("graphql down"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).not.toHaveBeenCalled();
 	});
 });
 
@@ -557,7 +744,10 @@ describe("dryRun", () => {
 		for (const r of [COMMENT, STATUS, APPROVE]) {
 			expect(w.routes()).not.toContain(r);
 		}
-		expect(w.graphql).not.toHaveBeenCalled();
+		expect(w.graphql).not.toHaveBeenCalledWith(
+			expect.stringContaining("enablePullRequestAutoMerge"),
+			expect.anything(),
+		);
 	});
 
 	it("does not set a failure status either", async () => {
