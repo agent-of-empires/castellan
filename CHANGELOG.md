@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/agent-of-empires/castellan/compare/v0.5.1...v0.6.0) (2026-11-20)
+
+
+### Features
+
+* **review:** give the model the PR's unresolved review threads ([#122](https://github.com/agent-of-empires/castellan/issues/122)) ([1d2c868](https://github.com/agent-of-empires/castellan/commit/1d2c868b730a89f5e43b0da4cdc723a7c12588fe))
+
 ## [0.5.1](https://github.com/agent-of-empires/castellan/compare/v0.5.0...v0.5.1) (2026-11-12)
 
 
