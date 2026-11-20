@@ -89,9 +89,39 @@ export function matchesPath(pattern: string, path: string) {
 }
 
 const touching = (s: Snapshot, patterns: string[]) =>
-	s.files
-		.map((f) => f.path)
-		.filter((p) => patterns.some((pat) => matchesPath(pat, p)));
+	filesOf(s).filter((p) => patterns.some((pat) => matchesPath(pat, p)));
+
+const filesOf = (s: Snapshot) => s.files.map((f) => f.path);
+
+const isCodeownersFile = (p: string) => CODEOWNERS_FILE.test(p);
+
+const isProtectedPattern = (p: string, c: Config) =>
+	[...c.paths.protected, ...c.paths.release].some((pat) => matchesPath(pat, p));
+
+/** A file the protected team owns, by the last CODEOWNERS rule that matches it. */
+const isProtectedTeamFile = (p: string, c: Config, x: Context) => {
+	const team = c.teams.protected ? slug(c.teams.protected) : "";
+	if (!team) return false;
+	const rule = x.codeowners.findLast((r) => matchesPath(r.pattern, p));
+	return (
+		rule?.owners.some(
+			(o) => o.startsWith("@") && o.includes("/") && slug(o) === team,
+		) === true
+	);
+};
+
+/**
+ * A path a fix must not write: castellan's own governance files, a protected or
+ * release path, or a protected team's file. `act` refuses a merge that touches
+ * one, and a suggestion on one is posted without its button.
+ */
+export const writeBarred = (path: string, c: Config, x: Context) =>
+	matchesPath(CONFIG_PATH, path) ||
+	(x.centralPath ? matchesPath(`/${x.centralPath}`, path) : false) ||
+	isCodeownersFile(path) ||
+	matchesPath(".github/", path) ||
+	isProtectedPattern(path, c) ||
+	isProtectedTeamFile(path, c, x);
 
 const lines = (s: Snapshot) =>
 	s.files.reduce((n, f) => n + f.additions + f.deletions, 0);
@@ -138,32 +168,27 @@ const castellanConfig: Rule = (s, _c, _r, x) => [
 ];
 
 const codeownersFile: Rule = (s) =>
-	paths(
-		s.files.map((f) => f.path).filter((p) => CODEOWNERS_FILE.test(p)),
-		"touches CODEOWNERS",
-	);
+	paths(filesOf(s).filter(isCodeownersFile), "touches CODEOWNERS");
 
 const githubDir: Rule = (s) =>
-	paths(touching(s, [".github/"]), "touches .github/");
+	paths(
+		filesOf(s).filter((p) => matchesPath(".github/", p)),
+		"touches .github/",
+	);
 
 const protectedPath: Rule = (s, c) =>
 	paths(
-		touching(s, [...c.paths.protected, ...c.paths.release]),
+		filesOf(s).filter((p) => isProtectedPattern(p, c)),
 		"touches a protected or release path",
 	);
 
 const protectedOwner: Rule = (s, c, _r, x) => {
-	const team = c.teams.protected && slug(c.teams.protected);
+	const team = c.teams.protected ? slug(c.teams.protected) : "";
 	if (!team) return [];
-	const owned = s.files
-		.map((f) => f.path)
-		.filter((p) => {
-			const rule = x.codeowners.findLast((r) => matchesPath(r.pattern, p));
-			return rule?.owners.some(
-				(o) => o.startsWith("@") && o.includes("/") && slug(o) === team,
-			);
-		});
-	return paths(owned, `owned by the protected team ${team}`);
+	return paths(
+		filesOf(s).filter((p) => isProtectedTeamFile(p, c, x)),
+		`owned by the protected team ${team}`,
+	);
 };
 
 /** Escalates before `wait`: without a merge ref, pull_request workflows never start. */

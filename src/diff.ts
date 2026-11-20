@@ -6,7 +6,7 @@ export type DiffLines = Map<string, Set<number>>;
 
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-export function rightLines(diff: string): DiffLines {
+export function rightLines(diff: string, addedOnly = false): DiffLines {
 	const out: DiffLines = new Map();
 	let path: string | null = null;
 	let line = 0;
@@ -42,9 +42,12 @@ export function rightLines(diff: string): DiffLines {
 		// "\ No newline at end of file" is not a line of either side.
 		if (raw.startsWith("\\")) continue;
 		if (raw.startsWith("-")) continue;
-		// Context and added lines both exist on the new side.
-		out.get(path)?.add(line);
+		// Context and added lines both exist on the new side; `addedOnly` keeps the added.
+		if (!addedOnly || raw.startsWith("+")) out.get(path)?.add(line);
 		line++;
 	}
 	return out;
 }
+
+/** Only the lines the diff adds, not the unchanged context around them. */
+export const addedLines = (diff: string) => rightLines(diff, true);

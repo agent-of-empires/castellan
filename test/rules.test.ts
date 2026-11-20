@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type Config, loadConfig } from "../src/config.js";
-import { type Context, evaluate, RULE_IDS } from "../src/rules.js";
+import { type Context, evaluate, RULE_IDS, writeBarred } from "../src/rules.js";
 import type { Snapshot } from "../src/snapshot.js";
 
 const load = async (yaml = "") => {
@@ -9,6 +9,9 @@ const load = async (yaml = "") => {
 	return r.config;
 };
 const config = await load();
+const barredConfig = await load(
+	"paths: { protected: ['src/auth/**'] }\nteams: { protected: sec }",
+);
 
 const file = (path: string, additions = 5, deletions = 0) => ({
 	path,
@@ -689,5 +692,30 @@ describe("order", () => {
 		const s = snap({ files: [file(".castellan.yml")] });
 		expect(rulesOf(run(s, c))).toEqual(["mode_off"]);
 		expect(rulesOf(run({ ...s, draft: true }, c))).toEqual(["draft"]);
+	});
+});
+
+describe("writeBarred", () => {
+	const c = barredConfig;
+	const x = ctx({
+		codeowners: [{ pattern: "/src/core/", owners: ["@org/sec"] }],
+	});
+
+	it("bars castellan's own files and every protected path", () => {
+		for (const path of [
+			".castellan.yml",
+			"nested/.castellan.yml",
+			"CODEOWNERS",
+			"docs/CODEOWNERS",
+			".github/workflows/ci.yml",
+			"src/auth/token.ts",
+			"src/core/x.ts",
+		])
+			expect(writeBarred(path, c, x)).toBe(true);
+	});
+
+	it("allows an ordinary path", () => {
+		expect(writeBarred("src/a.ts", c, x)).toBe(false);
+		expect(writeBarred("src/core/x.ts", c, ctx())).toBe(false);
 	});
 });

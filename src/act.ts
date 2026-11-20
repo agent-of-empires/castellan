@@ -1,5 +1,6 @@
 import { type Brief, renderComment, renderReviewBody } from "./comment.js";
 import type { Config } from "./config.js";
+import { addedLines } from "./diff.js";
 import type { GithubTransport, Repo } from "./github.js";
 import {
 	dismissStaleBlocker,
@@ -10,7 +11,7 @@ import {
 	submitReview,
 } from "./review.js";
 import { escalationReviewers, requestReviewers } from "./reviewers.js";
-import { type Context, touchesProtected } from "./rules.js";
+import { type Context, touchesProtected, writeBarred } from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
 
@@ -105,7 +106,16 @@ export async function act(
 	// findings stay in the brief instead, and the approval travels alone.
 	const planned =
 		config.review.inline && !isMerge
-			? inlineComments(final.inline ?? [], final.review?.verdict.reasons ?? [])
+			? inlineComments(
+					final.inline ?? [],
+					final.review?.verdict.reasons ?? [],
+					{
+						// A suggestion only becomes code on a line this PR added, and never on
+						// a governance file or a protected path.
+						added: addedLines(snapshot.diff),
+						barred: (path) => writeBarred(path, config, ctx),
+					},
+				)
 			: [];
 	const already = planned.length
 		? await postedAnchors(transport, repoRef, pullNumber, author.login)
