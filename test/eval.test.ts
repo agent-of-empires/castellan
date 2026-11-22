@@ -258,7 +258,12 @@ describe("collectCases", () => {
 			humanReviews: 1,
 		});
 		expect(third?.snapshot.reviews).toEqual([
-			{ login: "coderabbitai[bot]", state: "APPROVED", commitId: "x", association: "" },
+			{
+				login: "coderabbitai[bot]",
+				state: "APPROVED",
+				commitId: "x",
+				association: "",
+			},
 		]);
 		expect(first?.requiredChecks).toEqual(["a"]);
 	});
