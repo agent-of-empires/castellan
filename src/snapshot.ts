@@ -43,8 +43,16 @@ export interface Snapshot {
 		/** Epoch ms of `started_at`; null when missing (the API has no creation time). */
 		startedAt?: number | null;
 	}[];
-	/** State and commit only; review bodies are human text and are left out. */
-	reviews: { login: string; state: string; commitId: string }[];
+	/**
+	 * State, commit and the reviewer's relationship to the repo; review bodies
+	 * are human text and are left out.
+	 */
+	reviews: {
+		login: string;
+		state: string;
+		commitId: string;
+		association: string;
+	}[];
 	/**
 	 * Every commit on the PR, newest last, as the logins GitHub maps and the full
 	 * message. Castellan's own fix commits are recognised by either.
@@ -144,6 +152,7 @@ export async function buildSnapshot(
 		login: r.user?.login ?? "",
 		state: r.state,
 		commitId: r.commit_id ?? "",
+		association: r.author_association ?? "",
 	}));
 	const fullBody = pr.body ?? "";
 	const body = cap(fullBody, BODY_CAP);

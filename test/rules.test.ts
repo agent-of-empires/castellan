@@ -443,7 +443,14 @@ describe("escalate rules", () => {
 	);
 	escalates("generated_only", { files: [file("pnpm-lock.yaml")] });
 	escalates("human_changes_requested", {
-		reviews: [{ login: "bob", state: "CHANGES_REQUESTED", commitId: "old" }],
+		reviews: [
+			{
+				login: "bob",
+				state: "CHANGES_REQUESTED",
+				commitId: "old",
+				association: "MEMBER",
+			},
+		],
 	});
 	escalates("stacked", { body: "Stacked on #12.\n\nCloses #7" });
 	escalates("author_class", { authorClass: "bot" });
@@ -521,9 +528,19 @@ describe("rule details", () => {
 
 	it("a later approval clears human changes requested", () => {
 		const reviews = [
-			{ login: "bob", state: "CHANGES_REQUESTED", commitId: "a" },
-			{ login: "bob", state: "APPROVED", commitId: "b" },
-			{ login: "coderabbitai[bot]", state: "CHANGES_REQUESTED", commitId: "b" },
+			{
+				login: "bob",
+				state: "CHANGES_REQUESTED",
+				commitId: "a",
+				association: "MEMBER",
+			},
+			{ login: "bob", state: "APPROVED", commitId: "b", association: "MEMBER" },
+			{
+				login: "coderabbitai[bot]",
+				state: "CHANGES_REQUESTED",
+				commitId: "b",
+				association: "MEMBER",
+			},
 		];
 		expect(run(snap({ reviews })).outcome).toBe("candidate");
 	});
@@ -639,7 +656,14 @@ ${SIZED}`;
 			"src/core/x.ts",
 			"migrations/1.sql",
 		].map((p) => file(p, 1)),
-		reviews: [{ login: "bob", state: "CHANGES_REQUESTED", commitId: "a" }],
+		reviews: [
+			{
+				login: "bob",
+				state: "CHANGES_REQUESTED",
+				commitId: "a",
+				association: "MEMBER",
+			},
+		],
 	});
 	const files = (...paths: string[]) => ({
 		files: paths.map((p) => file(p, 1)),
@@ -748,7 +772,12 @@ ${SIZED}`;
 				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
 			],
 			reviews: [
-				{ login: "coderabbitai[bot]", state: "APPROVED", commitId: "abc" },
+				{
+					login: "coderabbitai[bot]",
+					state: "APPROVED",
+					commitId: "abc",
+					association: "MEMBER",
+				},
 			],
 		});
 		expect(rulesOf(run(wrote, c, [], x))).toContain("castellan_written");
@@ -756,9 +785,48 @@ ${SIZED}`;
 			commits: [
 				{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
 			],
-			reviews: [{ login: "bob", state: "APPROVED", commitId: "abc" }],
+			reviews: [
+				{
+					login: "bob",
+					state: "APPROVED",
+					commitId: "abc",
+					association: "MEMBER",
+				},
+			],
 		});
 		expect(rulesOf(run(human, c, [], x))).not.toContain("castellan_written");
+	});
+
+	it("does not take an approval from someone who cannot write as the human one", async () => {
+		const c = await load(yaml);
+		const wrote = (
+			reviews: {
+				login: string;
+				state: string;
+				commitId: string;
+				association: string;
+			}[],
+		) =>
+			snap({
+				commits: [
+					{ logins: ["castellan[bot]"], message: "x\n\ncastellan-fix: 1" },
+				],
+				reviews,
+			});
+		const at = (login: string, association: string) =>
+			rulesOf(
+				run(
+					wrote([{ login, state: "APPROVED", commitId: "abc", association }]),
+					c,
+					[],
+					x,
+				),
+			);
+		// A second account of the author, and an account with no write access, both
+		// approve the head without clearing the writer.
+		expect(at("alice", "OWNER")).toContain("castellan_written");
+		expect(at("someone", "NONE")).toContain("castellan_written");
+		expect(at("bob", "COLLABORATOR")).not.toContain("castellan_written");
 	});
 
 	it("treats a commit list the API cut short as castellan having written", async () => {

@@ -15,6 +15,15 @@ export const MAX_COMMITS = 3;
 
 const HEADLINE = "fix: apply castellan review suggestions";
 
+/**
+ * Paths a build or CI runs. A suggestion is written from text the model read,
+ * including issue and thread bodies anyone can write, so a line here is code
+ * that would run with repository secrets before a human reads it. Those stay
+ * comments the author can apply themselves.
+ */
+const EXECUTED =
+	/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Makefile|Dockerfile[^/]*|[^/]+\.sh|[^/]+\.ya?ml)$/i;
+
 export interface Fix {
 	path: string;
 	/** New-file line number, the same one an inline comment would use. */
@@ -39,8 +48,9 @@ export interface PlanScope {
 
 /**
  * The suggestions worth applying: one line, anchored to an added line of the
- * diff, in a file this PR changes and no rule protects, and different from what
- * is there now. Everything else stays a comment the author can take or leave.
+ * diff, in a file this PR changes and no rule protects, in a file CI does not
+ * run, and different from what is there now. Everything else stays a comment
+ * the author can take or leave.
  */
 export function planFixes(
 	review: OkReviewResult,
@@ -51,7 +61,11 @@ export function planFixes(
 	const used = new Set<string>();
 	for (const r of review.verdict.reasons) {
 		if (out.length >= limit) break;
+		// Issue #124 scopes pushed fixes to `nit` and `concern`: a blocker is a
+		// finding for a person to weigh, not something to rewrite in place.
+		if (r.severity === "blocker") continue;
 		if (!r.path || r.line === undefined) continue;
+		if (EXECUTED.test(r.path)) continue;
 		if (!changed.has(r.path) || protectedPath(r.path)) continue;
 		const expected = added.get(r.path)?.get(r.line);
 		if (expected === undefined) continue;

@@ -117,7 +117,7 @@ The one place castellan writes instead of commenting. Off by default, and only e
 fix: { pushes: true }
 ```
 
-With it on, an escalation whose findings carry suggestions applies up to `maxFixes` of them as a single commit authored by castellan, and says so in the brief. Then the new head is reviewed on its own: the run that pushed only updates the comment, so no review, status or reviewer request is aimed at a head that no longer exists.
+With it on, an escalation whose `concern` and `nit` findings carry suggestions applies up to `maxFixes` of them as a single commit authored by castellan, and says so in the brief. A `blocker` stays a comment to weigh, which is the phase two scope of issue #124. The run that pushed only updates the comment, so no review, status or reviewer request is aimed at a head that no longer exists; the new head is evaluated by the event it triggers, where `castellan_written` applies.
 
 Guards, all checked before the first API call:
 
@@ -128,9 +128,10 @@ Guards, all checked before the first API call:
 - Only a regular file the tree lists as `100644` or `100755` is edited, so an executable keeps its bit and a symlink is left alone, and the blob is only rewritten when it decodes as UTF-8 and re-encodes to the same bytes.
 - A suggestion is applied only when the line at the head still reads exactly as the diff showed it to the model, so a stale, invented or already-applied anchor produces no commit.
 - Writing stops where it would loop: a commit castellan wrote (its login as author or committer, or a `castellan-fix:` trailer) makes the next run comment instead of pushing, and a PR with 3 such commits gets no further ones.
-- A cached verdict is not a new review, so a sweep does not retry a push that already failed.
+- A cached verdict is not a new review, so a sweep does not retry a push that already failed, and a `--dry-run` writes nothing.
+- A path CI runs is never written: `package.json`, a lockfile, `Makefile`, `Dockerfile*`, a `*.sh` or a `*.yml`/`*.yaml` file. The suggestion text comes from what the model read, including issue and review thread bodies anyone can write, so committing a line there would run attacker-influenced code with repository secrets before a human reads it.
 
-Any failure (no write permission, an unreadable or truncated tree, a ref that moved, a fork) leaves the suggestion as a comment. A PR that contains a castellan commit is also never merged on castellan's own verdict: `castellan_written` escalates it until a human approves the current head.
+Any failure (no write permission, an unreadable or truncated tree, a ref that moved, a fork) leaves the suggestion as a comment. A PR that contains a castellan commit is also never merged on castellan's own verdict: `castellan_written` escalates it until a human with write access who is not its author approves the current head.
 
 ### `paths`
 

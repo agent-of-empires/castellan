@@ -150,10 +150,15 @@ export function castellanWrote(s: Snapshot, login?: string): boolean {
 	);
 }
 
+/** Relationships that can write to the repo, so an approval from one is binding. */
+const WRITES = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
 /**
  * A human approval on the current head, which is what lets castellan's own code
  * merge. A bot approval is not one: an App or Action can approve without a person,
- * so counting it would let the writer judge its own commit.
+ * so counting it would let the writer judge its own commit. Nor is an approval
+ * from someone who cannot write to the repo, or from the PR author, who can open
+ * a second account and approve their own model-written commit.
  */
 export function humanApprovedHead(s: Snapshot, login?: string): boolean {
 	return s.reviews.some(
@@ -161,6 +166,8 @@ export function humanApprovedHead(s: Snapshot, login?: string): boolean {
 			r.state === "APPROVED" &&
 			r.commitId === s.headSha &&
 			r.login !== login &&
+			r.login !== s.author &&
+			WRITES.has(r.association) &&
 			!isBot(r.login),
 	);
 }

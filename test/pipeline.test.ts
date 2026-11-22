@@ -359,7 +359,7 @@ describe("evaluatePull", () => {
 			escalate: false,
 			reasons: [
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "wrong constant",
 					path: "src/a.ts",
 					line: 2,
@@ -368,7 +368,7 @@ describe("evaluatePull", () => {
 			],
 		};
 		const w = world({
-			yaml: "mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }",
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }\nlimits: { maxLines: 1 }",
 			model: fix,
 			diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;",
 		});
@@ -453,7 +453,12 @@ describe("evaluatePull", () => {
 				},
 			],
 			reviews: [
-				{ user: { login: "bob" }, state: "APPROVED", commit_id: "head1" },
+				{
+					user: { login: "bob" },
+					state: "APPROVED",
+					commit_id: "head1",
+					author_association: "MEMBER",
+				},
 			],
 		});
 		const ok = await evaluatePull(approved.env, repo, 3);
@@ -468,7 +473,7 @@ describe("evaluatePull", () => {
 			escalate: false,
 			reasons: [
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "wrong constant",
 					path: "src/a.ts",
 					line: 2,
@@ -477,7 +482,7 @@ describe("evaluatePull", () => {
 			],
 		};
 		const yaml =
-			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }";
+			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }\nlimits: { maxLines: 1 }";
 		const diff =
 			"diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;";
 		const git = "GET /repos/{owner}/{repo}/git/commits/{commit_sha}";
@@ -508,7 +513,7 @@ describe("evaluatePull", () => {
 			escalate: false,
 			reasons: [
 				{
-					severity: "blocker",
+					severity: "concern",
 					text: "wrong constant",
 					path: "src/a.ts",
 					line: 2,
