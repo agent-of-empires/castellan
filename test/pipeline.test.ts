@@ -219,6 +219,17 @@ describe("evaluatePull", () => {
 		expect(r.brief?.review?.ok).toBe(true);
 	});
 
+	it("serves a second evaluation of the same size escalation from the cache", async () => {
+		// The head has not moved, so the second run reuses the cached verdict
+		// rather than paying for the review twice.
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]\nlimits: { maxLines: 1 }",
+		});
+		await evaluatePull(w.env, repo, 3);
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not run the model when an oversized PR also breaks another rule", async () => {
 		// The size rule fires first, but an external author still escalates, and the
 		// gate must look at every rule rather than the first hit.
