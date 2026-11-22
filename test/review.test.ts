@@ -153,7 +153,7 @@ describe("inlineComments", () => {
 		expect(out[0]?.body).toContain("```suggestion\n\tif (!x) return;\n```");
 	});
 
-	it("keeps the finding but drops the button off an added line", () => {
+	it("keeps the finding but drops the button off a line the diff does not add", () => {
 		const finding = [{ index: 0, path: "p", line: 99 }];
 		const out = inlineComments(
 			finding,
