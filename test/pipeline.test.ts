@@ -608,6 +608,49 @@ describe("evaluatePull", () => {
 		);
 	});
 
+	it("carries a finding past a head whose model run failed", async () => {
+		const w = world();
+		w.create.mockResolvedValueOnce({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: true,
+						new_behavior: false,
+						reasons: [
+							{
+								severity: "blocker",
+								text: "null deref",
+								path: "src/a.ts",
+								line: 12,
+							},
+						],
+					}),
+				},
+			],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		// The next head's review fails, so its block publishes the carry instead of
+		// an `llm` part; the head after that must still see what head A found.
+		w.headState.head = "head2";
+		w.create.mockRejectedValueOnce(new Error("down"));
+		await evaluatePull(w.env, repo, 3);
+		w.headState.head = "head3";
+		await evaluatePull(w.env, repo, 3);
+		const last = w.create.mock.calls.length - 1;
+		expect(w.sent(last)).toContain("null deref");
+		expect(w.sent(last)).toContain("at head1");
+	});
+
+	it("serves a same-head re-run from the cache, so no finding is restated", async () => {
+		const w = world();
+		await evaluatePull(w.env, repo, 3);
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		expect(w.sent()).not.toContain("An earlier automated review");
+	});
+
 	it("keeps the cached verdict when the thread read fails on a known head", async () => {
 		const w = world({ yaml: "mode: shadow" });
 		await evaluatePull(w.env, repo, 3);
