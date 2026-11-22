@@ -543,13 +543,14 @@ describe("evaluatePull", () => {
 describe("asking for a reviewer", () => {
 	it("asks once per head, including after the block is read back", async () => {
 		const w = world({
-			yaml: "mode: enforce\nlimits: { maxLines: 1 }\nreviewers: { team: platform }",
+			yaml: "mode: enforce\nlimits: { maxLines: 1 }\nreviewers: { team: platform, users: [bob] }",
 		});
 		await evaluatePull(w.env, repo, 3);
 		// The second run reads its own block back, as a sweep on the same head would.
 		await evaluatePull(w.env, repo, 3);
 		const asked = w.request.mock.calls.filter((c) => c[0] === REVIEWERS);
-		expect(asked).toHaveLength(1);
+		// Both halves landed, so neither is asked again.
+		expect(asked).toHaveLength(2);
 	});
 });
 

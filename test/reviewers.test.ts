@@ -141,18 +141,34 @@ describe("requestReviewers", () => {
 				users: [],
 				author: "alice",
 			}),
-		).resolves.toBe(false);
+		).resolves.toEqual([]);
 	});
 
-	it("reports success only when every request landed", async () => {
-		const { transport: t } = transport();
+	it("reports the halves that landed, so one rejection does not hide the other", async () => {
+		// A bad login in `reviewers.users` rejects that call; the team's still lands.
+		const { request, transport: t } = transport();
+		request.mockImplementation(async (_route, body: { reviewers?: string[] }) => {
+			if (body.reviewers) throw new Error("422");
+			return { data: {} };
+		});
 		await expect(
 			requestReviewers(t, { owner: "o", repo: "r" }, 3, {
 				team: "platform",
-				users: [],
+				users: ["bob"],
 				author: "alice",
 			}),
-		).resolves.toBe(true);
+		).resolves.toEqual(["team"]);
+		// The retry asks only the half that did not land.
+		request.mockClear();
+		await requestReviewers(t, { owner: "o", repo: "r" }, 3, {
+			team: "platform",
+			users: ["bob"],
+			author: "alice",
+			already: ["team"],
+		});
+		const asked = request.mock.calls.map((c) => c[1]);
+		expect(asked).toHaveLength(1);
+		expect(asked[0]).toMatchObject({ reviewers: ["bob"] });
 	});
 
 	it("drops the org from a team that already carries it", async () => {

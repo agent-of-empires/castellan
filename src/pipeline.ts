@@ -308,6 +308,8 @@ export async function evaluatePull(
 			// the request.
 			requested:
 				cached?.headSha === head.headSha ? cached.requested : undefined,
+			requestedParts:
+				cached?.headSha === head.headSha ? cached.requestedParts : undefined,
 		};
 		const dedup = await getOrRun({
 			cached,
@@ -356,12 +358,14 @@ export async function evaluatePull(
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
 			shadow: config.mode === "shadow",
-			// Shown on the verdict line so an escalation names who it was asked of.
-			ownerTeam: ownedTeam(
-				snapshot.files.map((f) => f.path),
-				codeowners,
-				repoRef.owner,
-			),
+			// The team an escalation asks, so the verdict line names the team asked
+			// rather than only a CODEOWNERS one.
+			ownerTeam:
+				ownedTeam(
+					snapshot.files.map((f) => f.path),
+					codeowners,
+					repoRef.owner,
+				) ?? config.reviewers.team,
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
 		const acted = await act(transport, repoRef, {

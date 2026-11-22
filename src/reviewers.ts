@@ -28,19 +28,35 @@ export function ownedTeam(
 	return undefined;
 }
 
+/** One half of the review request, remembered on its own. */
+export type RequestPart = "team" | "users";
+
 /**
  * Asks the configured reviewers for a review. Best effort: a PR that cannot be
  * assigned still gets its escalation comment, so the run is never failed by
  * this. The PR author is dropped because GitHub rejects a review request for
  * them. The team travels in its own call, so one invalid user login cannot
- * reject the request that names the owning team.
+ * reject the request that names the owning team, and each half is remembered
+ * separately so a rejected half does not make the other be asked again.
+ *
+ * Returns the halves that landed; a caller records those against the head.
  */
 export async function requestReviewers(
 	transport: GithubTransport,
 	{ owner, repo }: Repo,
 	pullNumber: number,
-	{ team, users, author }: { team?: string; users: string[]; author: string },
-): Promise<boolean> {
+	{
+		team,
+		users,
+		author,
+		already = [],
+	}: {
+		team?: string;
+		users: string[];
+		author: string;
+		already?: RequestPart[];
+	},
+): Promise<RequestPart[]> {
 	const reviewers = users.filter(
 		(u) => u && u.toLowerCase() !== author.toLowerCase(),
 	);
@@ -55,17 +71,18 @@ export async function requestReviewers(
 			);
 			return true;
 		} catch (err) {
-			// A request that failed must be retried on the next event, so the caller
-			// records the head only when this returns true.
 			console.warn("requesting a review failed", { error: String(err) });
 			return false;
 		}
 	};
-	const asked = [
-		...(team ? [await ask({ team_reviewers: [slug(team)] })] : []),
-		...(reviewers.length ? [await ask({ reviewers })] : []),
-	];
-	return asked.length > 0 && asked.every(Boolean);
+	const landed: RequestPart[] = [];
+	if (team && !already.includes("team") && (await ask({ team_reviewers: [slug(team)] }))) {
+		landed.push("team");
+	}
+	if (reviewers.length && !already.includes("users") && (await ask({ reviewers }))) {
+		landed.push("users");
+	}
+	return landed;
 }
 
 /** The CODEOWNERS team if there is one, then `reviewers.team`, plus every `reviewers.users`. */

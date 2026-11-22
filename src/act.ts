@@ -147,13 +147,27 @@ export async function act(
 	// after a human removed the request.
 	const askReviewers = async (b: Brief) => {
 		if (config.mode !== "enforce" || b.outcome.verdict !== "escalate") return;
-		if (b.key.requested === headSha) return;
-		const asked = await requestReviewers(transport, repoRef, pullNumber, {
-			...escalationReviewers(b, config),
+		const already = b.key.requested === headSha ? (b.key.requestedParts ?? []) : [];
+		const target = escalationReviewers(b, config);
+		const wanted = [
+			...(target.team ? (["team"] as const) : []),
+			...(target.users.length ? (["users"] as const) : []),
+		];
+		if (wanted.every((part) => already.includes(part))) return;
+		const landed = await requestReviewers(transport, repoRef, pullNumber, {
+			...target,
 			author: snapshot.author,
+			already,
 		});
-		// A failed request is retried on the next event for this head.
-		if (asked) b.key.requested = headSha;
+		// Each half is recorded on its own, so a rejected half is retried on the
+		// next event for this head without asking the other one again.
+		if (landed.length) {
+			b.key.requested = headSha;
+			b.key.requestedParts = [...new Set([...already, ...landed])];
+		} else {
+			// Nobody was asked, so the brief must not claim a team was.
+			b.ownerTeam = undefined;
+		}
 	};
 	await askReviewers(final);
 

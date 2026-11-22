@@ -17,6 +17,8 @@ const blockSchema = z.strictObject({
 	threadReruns: z.number().int().min(0).optional(),
 	/** Head SHA whose escalation already asked for reviewers, so a sweep does not ask again. */
 	requested: z.string().optional(),
+	/** Which halves of that request landed, so a rejected half is not retried for the other. */
+	requestedParts: z.array(z.enum(["team", "users"])).optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -45,6 +47,8 @@ export interface CacheKey {
 	threadReruns?: number;
 	/** Head SHA whose escalation already asked for reviewers. */
 	requested?: string;
+	/** The halves of that request that landed. */
+	requestedParts?: ("team" | "users")[];
 }
 
 export const MARKER = "<!-- castellan";
