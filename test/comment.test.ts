@@ -273,14 +273,12 @@ describe("renderComment", () => {
 		const body = renderComment({
 			...brief,
 			related: [
-				{ number: 90, title: "tunnel rework", overlap: ["src/a.ts"] },
-				{ number: 91, title: "second @bob fix", overlap: ["src/a.ts"] },
+				{ number: 90, overlap: ["src/a.ts"] },
+				{ number: 91, overlap: ["src/a.ts"] },
 			],
 		});
+		// Only the number: the list is rendered from the PR numbers alone.
 		expect(body).toContain("Open PRs that share files with this PR: #90, #91");
-		// Only the number: another author's title is not rendered into the brief.
-		expect(body).not.toContain("tunnel rework");
-		expect(body).not.toContain("second @bob fix");
 	});
 
 	it("says nothing about open PRs when there are none", () => {
