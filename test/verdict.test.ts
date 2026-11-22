@@ -22,7 +22,9 @@ const review = (
 
 describe("decide", () => {
 	it("posts nothing for skip", () => {
-		expect(decide({ outcome: "skip", reasons: [] }, review())).toBeNull();
+		expect(
+			decide({ outcome: "skip", reasons: [] }, review(), "fixed"),
+		).toBeNull();
 	});
 
 	it("keeps rule escalations whatever the model says", () => {
@@ -30,14 +32,14 @@ describe("decide", () => {
 			outcome: "escalate",
 			reasons: [{ rule: "max_lines", text: "too big" }],
 		};
-		expect(decide(d, review())).toEqual({
+		expect(decide(d, review(), "fixed")).toEqual({
 			verdict: "escalate",
 			reasons: d.reasons,
 		});
 	});
 
 	it("merges a clean candidate", () => {
-		expect(decide(candidate, review())).toEqual({
+		expect(decide(candidate, review(), "fixed")).toEqual({
 			verdict: "merge",
 			reasons: [],
 		});
@@ -50,7 +52,7 @@ describe("decide", () => {
 				{ severity: "nit", text: "n" },
 			],
 		});
-		expect(decide(candidate, r)?.verdict).toBe("merge");
+		expect(decide(candidate, r, "fixed")?.verdict).toBe("merge");
 	});
 
 	it.each([
@@ -58,7 +60,7 @@ describe("decide", () => {
 		["new behavior", { new_behavior: true }],
 		["blocker", { reasons: [{ severity: "blocker" as const, text: "b" }] }],
 	])("downgrades a candidate on %s", (_n, over) => {
-		const o = decide(candidate, review(over));
+		const o = decide(candidate, review(over), "fixed");
 		expect(o?.verdict).toBe("escalate");
 		expect(o?.reasons.length).toBeGreaterThan(0);
 	});
@@ -76,6 +78,7 @@ describe("decide", () => {
 					{ severity: "blocker", text: "leaks a handle on every retry" },
 				],
 			}),
+			"fixed",
 		);
 		expect(o).toEqual({
 			verdict: "escalate",
@@ -108,7 +111,7 @@ describe("decide", () => {
 			promptHash: "p",
 		};
 		for (const r of [failed, undefined]) {
-			const o = decide(candidate, r);
+			const o = decide(candidate, r, "fixed");
 			expect(o?.verdict).toBe("escalate");
 			expect(JSON.stringify(o)).not.toContain("raw secret");
 		}
@@ -118,7 +121,7 @@ describe("decide", () => {
 		const outcomes: Decision["outcome"][] = ["skip", "escalate", "candidate"];
 		for (const outcome of outcomes) {
 			for (const r of [review(), review({ new_behavior: true }), undefined]) {
-				expect(decide({ outcome, reasons: [] }, r)?.verdict).not.toBe(
+				expect(decide({ outcome, reasons: [] }, r, "fixed")?.verdict).not.toBe(
 					"send_back",
 				);
 			}

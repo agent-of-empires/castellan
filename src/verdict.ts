@@ -18,8 +18,8 @@ const model = (rule: string, text: string): Reason => ({ rule, text });
  */
 export function decide(
 	decision: Decision,
-	review?: ReviewResult,
-	size: Config["size"] = "fixed",
+	review: ReviewResult | undefined,
+	size: Config["size"],
 ): Outcome | null {
 	if (decision.outcome === "skip" || decision.outcome === "wait") return null;
 	if (decision.outcome === "escalate") {

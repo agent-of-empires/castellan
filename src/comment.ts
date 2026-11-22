@@ -57,7 +57,8 @@ export function escapeText(text: string): string {
 		.trim();
 }
 
-const reason = (text: string) => escapeText(text.slice(0, MAX_REASON_CHARS));
+const capped = (text: string) => escapeText(text.slice(0, MAX_REASON_CHARS));
+const reason = capped;
 const cell = (text: string) => escapeText(text).replace(/[\\|]/g, "\\$&");
 const at = (path?: string) =>
 	path ? ` (\`${reason(path).replace(/`/g, "")}\`)` : "";
@@ -87,7 +88,7 @@ function modelIntro(brief: Brief): string[] {
 		`- Adds behavior beyond the request: ${yesNo(new_behavior)}`,
 		...(escalate
 			? [
-					`- Needs a human: ${escapeText(escalation ?? "yes, for a reason the model did not name")}`,
+					`- Needs a human: ${capped(escalation ?? "yes, for a reason the model did not name")}`,
 				]
 			: []),
 	];

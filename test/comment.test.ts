@@ -4,6 +4,7 @@ import {
 	BODY_LIMIT,
 	type Brief,
 	escapeText,
+	MAX_REASON_CHARS,
 	renderComment,
 	renderReviewBody,
 } from "../src/comment.js";
@@ -270,6 +271,75 @@ describe("renderComment", () => {
 		);
 		expect(renderComment(brief)).not.toContain("advisory");
 	});
+	it("names a human when the model withheld the merge", () => {
+		const escalated = (escalation: string | undefined): Brief => ({
+			...brief,
+			outcome: {
+				verdict: "escalate",
+				reasons: [
+					{ rule: "llm_escalate", text: "the queue rewrite needs a human" },
+				],
+			},
+			review: {
+				...review,
+				verdict: {
+					intent_match: true,
+					new_behavior: false,
+					escalate: true,
+					escalation,
+					reasons: [],
+				},
+			},
+		});
+		expect(
+			renderComment(escalated("rewrites the scheduler and its queue")),
+		).toContain("- Needs a human: rewrites the scheduler and its queue");
+		// No text to show: the line still says a human has to look.
+		expect(renderComment(escalated(undefined))).toContain(
+			"- Needs a human: yes, for a reason the model did not name",
+		);
+		// `size: off`: the model may still ask, but the verdict did not change, so
+		// the line would read as a block that is not there.
+		const unread: Brief = {
+			...brief,
+			review: {
+				...review,
+				verdict: {
+					intent_match: true,
+					new_behavior: false,
+					escalate: true,
+					escalation: "too big",
+					reasons: [],
+				},
+			},
+		};
+		expect(renderComment(unread)).not.toContain("Needs a human");
+	});
+
+	it("caps the escalation text like every other reason", () => {
+		const body = renderComment({
+			...brief,
+			outcome: {
+				verdict: "escalate",
+				reasons: [{ rule: "llm_escalate", text: "needs a human" }],
+			},
+			review: {
+				...review,
+				verdict: {
+					intent_match: true,
+					new_behavior: false,
+					escalate: true,
+					escalation: "x".repeat(MAX_REASON_CHARS + 50),
+					reasons: [],
+				},
+			},
+		});
+		// The brief line carries the capped text; the state block keeps the raw
+		// verdict, which is not prose the reader sees.
+		const line = body.split("\n").find((l) => l.startsWith("- Needs a human:"));
+		expect(line).toBe(`- Needs a human: ${"x".repeat(MAX_REASON_CHARS)}`);
+	});
+
 	it("names open PRs that change the same files", () => {
 		const body = renderComment({
 			...brief,

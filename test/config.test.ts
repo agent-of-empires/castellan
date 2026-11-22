@@ -45,7 +45,13 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 			ok: true,
 			config: {
 				mode: "shadow",
-				limits: { maxFiles: 2, staleCheckMinutes: 60 },
+				limits: {
+					maxFiles: 2,
+					// The shipped limits: a file that omits them must not drift.
+					maxLines: 100,
+					maxTopLevelDirs: 2,
+					staleCheckMinutes: 60,
+				},
 				project: { name: "Agent of Empires", roadmapField: "Roadmap state" },
 				triage: {
 					priority_labels: ["P0", "P1", "P2", "P3"],

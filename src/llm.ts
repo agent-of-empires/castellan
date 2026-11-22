@@ -71,8 +71,13 @@ export const verdictSchema = z
 
 export type Verdict = z.infer<typeof verdictSchema>;
 
-/** `size: off` never asks for the judgement, so a reply without it is not a failure. */
-const unjudgedVerdictSchema = z.strictObject({
+/**
+ * `size: off` never asks for the judgement, so a reply without it is not a
+ * failure, and a block written before `escalate` existed must still parse:
+ * `parseBlock` returns null for a malformed block, which would drop the carried
+ * findings and the reviewer-request flag with it.
+ */
+export const unjudgedVerdictSchema = z.strictObject({
 	intent_match: z.boolean(),
 	new_behavior: z.boolean(),
 	escalate: z.boolean().optional().default(false),
@@ -84,22 +89,8 @@ const unjudgedVerdictSchema = z.strictObject({
 	reasons: z.array(reasonSchema),
 });
 
-/**
- * A block written before `escalate` existed must still parse: `parseBlock` returns
- * null for a malformed block, and that would drop the carried findings and the
- * reviewer-request flag with it.
- */
-export const storedVerdictSchema = z.strictObject({
-	intent_match: z.boolean(),
-	new_behavior: z.boolean(),
-	escalate: z.boolean().optional().default(false),
-	escalation: z
-		.string()
-		.nullish()
-		.transform((v) => (v?.trim() ? v.trim() : undefined))
-		.optional(),
-	reasons: z.array(reasonSchema),
-});
+/** A stored block and a `size: off` reply share the lenient shape. */
+export const storedVerdictSchema = unjudgedVerdictSchema;
 
 export type FailureReason =
 	| "missing_key"
