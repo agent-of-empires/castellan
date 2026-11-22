@@ -147,7 +147,8 @@ export async function act(
 	// after a human removed the request.
 	const askReviewers = async (b: Brief) => {
 		if (config.mode !== "enforce" || b.outcome.verdict !== "escalate") return;
-		const already = b.key.requested === headSha ? (b.key.requestedParts ?? []) : [];
+		const already =
+			b.key.requested === headSha ? (b.key.requestedParts ?? []) : [];
 		const target = escalationReviewers(b, config);
 		const wanted = [
 			...(target.team ? (["team"] as const) : []),

@@ -147,8 +147,10 @@ describe("requestReviewers", () => {
 	it("reports the halves that landed, so one rejection does not hide the other", async () => {
 		// A bad login in `reviewers.users` rejects that call; the team's still lands.
 		const { request, transport: t } = transport();
-		request.mockImplementation(async (_route, body: { reviewers?: string[] }) => {
-			if (body.reviewers) throw new Error("422");
+		request.mockImplementation(async (...args: unknown[]) => {
+			if ((args[1] as { reviewers?: string[] }).reviewers) {
+				throw new Error("422");
+			}
 			return { data: {} };
 		});
 		await expect(
@@ -166,7 +168,9 @@ describe("requestReviewers", () => {
 			author: "alice",
 			already: ["team"],
 		});
-		const asked = request.mock.calls.map((c) => c[1]);
+		const asked = request.mock.calls.map(
+			(c) => (c as unknown[])[1] as Record<string, unknown>,
+		);
 		expect(asked).toHaveLength(1);
 		expect(asked[0]).toMatchObject({ reviewers: ["bob"] });
 	});

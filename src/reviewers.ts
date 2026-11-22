@@ -76,10 +76,18 @@ export async function requestReviewers(
 		}
 	};
 	const landed: RequestPart[] = [];
-	if (team && !already.includes("team") && (await ask({ team_reviewers: [slug(team)] }))) {
+	if (
+		team &&
+		!already.includes("team") &&
+		(await ask({ team_reviewers: [slug(team)] }))
+	) {
 		landed.push("team");
 	}
-	if (reviewers.length && !already.includes("users") && (await ask({ reviewers }))) {
+	if (
+		reviewers.length &&
+		!already.includes("users") &&
+		(await ask({ reviewers }))
+	) {
 		landed.push("users");
 	}
 	return landed;
