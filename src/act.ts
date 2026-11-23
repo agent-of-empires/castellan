@@ -3,6 +3,7 @@ import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
 import {
 	dismissStaleBlocker,
+	hasLiveBlocker,
 	inlineComments,
 	postedAnchors,
 	type ReviewEvent,
@@ -69,8 +70,10 @@ export async function act(
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
 
-	const escalate = (rule: string, text: string): Brief => ({
+	/** `keepInline` only when the findings it names are posted on this run. */
+	const escalate = (rule: string, text: string, keepInline = false): Brief => ({
 		...brief,
+		inline: keepInline ? brief.inline : undefined,
 		outcome: { verdict: "escalate", reasons: [{ rule, text }] },
 	});
 	const publish = async (b: Brief) => {
@@ -97,6 +100,7 @@ export async function act(
 			? escalate(
 					"protected_guard",
 					"touches a protected path, protected team or governance file",
+					true,
 				)
 			: brief;
 	const isMerge = final.outcome.verdict === "merge";
@@ -112,7 +116,9 @@ export async function act(
 		: new Set<string>();
 	const comments = planned.filter((c) => !already.has(`${c.path}:${c.line}`));
 	const reasons = final.review?.verdict.reasons ?? [];
-	const blocking = comments.some(
+	// The dedup key is the anchor, so a reported blocker can already be posted: the
+	// block follows what this head reports, not what still needs posting.
+	const blocking = planned.some(
 		(c) => reasons[c.index]?.severity === "blocker",
 	);
 	const event: ReviewEvent =
@@ -125,7 +131,18 @@ export async function act(
 		comments.some((c) => c.index === i.index),
 	);
 	const post = async (): Promise<ReviewOutcome | null> => {
-		if (!comments.length && event !== "APPROVE") return null;
+		if (!comments.length && event !== "APPROVE") {
+			// Dedup left nothing to post, but the head still reports a blocker: a
+			// body-only review carries it, unless this head already carries one.
+			const carried =
+				event !== "REQUEST_CHANGES" ||
+				(await hasLiveBlocker(transport, repoRef, {
+					pullNumber,
+					headSha,
+					login: author.login,
+				}));
+			if (carried) return null;
+		}
 		try {
 			return await submitReview(transport, repoRef, {
 				pullNumber,
@@ -140,6 +157,28 @@ export async function act(
 			return null;
 		}
 	};
+
+	// The author can push while the model runs: a run for an earlier head must not
+	// post or dismiss against this one.
+	const liveHead = async () => {
+		const { data } = await transport.request(
+			"GET /repos/{owner}/{repo}/pulls/{pull_number}",
+			{ owner, repo, pull_number: pullNumber },
+		);
+		return data;
+	};
+	const stopFor = (pr: {
+		state: string;
+		merged?: boolean | null;
+		head: { sha: string };
+	}): ActResult | null =>
+		pr.state !== "open" || pr.merged
+			? { approved: false, queued: false, skipped: "not_open" }
+			: pr.head.sha !== headSha
+				? { approved: false, queued: false, skipped: "stale_head" }
+				: null;
+	const moved = stopFor(await liveHead());
+	if (moved) return moved;
 
 	// An escalation has nobody watching it until a reviewer is asked, and shadow
 	// must not write, so enforce is the only place this sends. The head is recorded
@@ -185,6 +224,10 @@ export async function act(
 	// No anchored blocker at this head, so an earlier one must not keep the PR
 	// blocked: GitHub would hold the old `REQUEST_CHANGES` until a later review.
 	if (event !== "REQUEST_CHANGES") {
+		// Posting the review and the brief takes time, and a blocker posted for a
+		// newer head in that window is not this run's to lift: read again right here.
+		const beforeDismissal = stopFor(await liveHead());
+		if (beforeDismissal) return beforeDismissal;
 		await dismissStaleBlocker(transport, repoRef, {
 			pullNumber,
 			headSha,
@@ -195,16 +238,10 @@ export async function act(
 	if (config.mode === "shadow") return { approved: false, queued: false };
 	if (!isMerge) return { approved: false, queued: false, skipped: "not_merge" };
 
-	const { data: pr } = await transport.request(
-		"GET /repos/{owner}/{repo}/pulls/{pull_number}",
-		{ owner, repo, pull_number: pullNumber },
-	);
-	if (pr.state !== "open" || pr.merged) {
-		return { approved: false, queued: false, skipped: "not_open" };
-	}
-	if (pr.head.sha !== headSha) {
-		return { approved: false, queued: false, skipped: "stale_head" };
-	}
+	// The approval is the last write, so it gets its own read of the head.
+	const pr = await liveHead();
+	const stoppedAfterDismissal = stopFor(pr);
+	if (stoppedAfterDismissal) return stoppedAfterDismissal;
 
 	review = await post();
 	const approved = review?.approved ?? false;

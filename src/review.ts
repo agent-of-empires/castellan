@@ -125,10 +125,7 @@ export async function submitReview(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
 			{ owner, repo, pull_number: pullNumber, review_id: existing.id, body },
 		);
-		return {
-			approved: existing.state === "APPROVED",
-			url: data.html_url,
-		};
+		return { approved: true, url: data.html_url };
 	};
 
 	if (event === "APPROVE") {
@@ -148,8 +145,9 @@ export async function submitReview(
 		return { approved: true, url: data.html_url };
 	}
 
-	// The caller only posts a `COMMENT` or `REQUEST_CHANGES` review when it has
-	// comments, and `index` is castellan's own bookkeeping, not a review field.
+	// The caller posts a `COMMENT` review only when it has comments; a
+	// `REQUEST_CHANGES` may carry none, since the block itself is the message, and
+	// `index` is castellan's own bookkeeping, not a review field.
 	const { data } = await transport.request(
 		"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{
@@ -166,10 +164,34 @@ export async function submitReview(
 }
 
 /**
+ * GitHub keeps one state per reviewer, so a head that already carries a
+ * `REQUEST_CHANGES` from castellan needs no second review: the state stands.
+ */
+export async function hasLiveBlocker(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	opts: { pullNumber: number; headSha: string; login: string },
+): Promise<boolean> {
+	const { pullNumber, headSha, login } = opts;
+	const reviews = await transport.paginate(
+		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+		{ owner, repo, pull_number: pullNumber, per_page: 100 },
+	);
+	return reviews.some(
+		(r) =>
+			r.user?.login === login &&
+			r.state === "CHANGES_REQUESTED" &&
+			r.commit_id === headSha,
+	);
+}
+
+/**
  * GitHub keeps a reviewer's latest state, so a blocker castellan posted on an
  * earlier head would hold a PR whose finding is gone: a later head that clears
  * the blocker without reaching `merge` posts nothing that would replace it.
  * Dismissing that review lifts it; a failed dismissal is logged, never fatal.
+ * The findings review this run posts is newer than the blocker, and a later
+ * `COMMENT` does not lift a changes request, so select the blocker itself.
  */
 export async function dismissStaleBlocker(
 	transport: GithubTransport,
@@ -181,9 +203,15 @@ export async function dismissStaleBlocker(
 		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{ owner, repo, pull_number: pullNumber, per_page: 100 },
 	);
-	const last = reviews.filter((r) => r.user?.login === login).at(-1);
-	if (last?.state !== "CHANGES_REQUESTED" || last.commit_id === headSha)
-		return false;
+	const stale = reviews
+		.filter(
+			(r) =>
+				r.user?.login === login &&
+				r.state === "CHANGES_REQUESTED" &&
+				r.commit_id !== headSha,
+		)
+		.at(-1);
+	if (!stale) return false;
 	try {
 		await transport.request(
 			"PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals",
@@ -191,7 +219,7 @@ export async function dismissStaleBlocker(
 				owner,
 				repo,
 				pull_number: pullNumber,
-				review_id: last.id,
+				review_id: stale.id,
 				message:
 					"The blocker this review named is no longer reported at the current head.",
 			},
