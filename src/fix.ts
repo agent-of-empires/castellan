@@ -3,6 +3,9 @@ import type { GithubTransport, Repo } from "./github.js";
 import type { OkReviewResult } from "./llm.js";
 import { suggestionText } from "./review.js";
 
+/** The trailer castellan puts on a fix commit, so the commit says who wrote it. */
+export const FIX_TRAILER = /^castellan-fix:/m;
+
 /** Suggestions applied per commit. A review that needs more is a rewrite, not a fix. */
 export const MAX_FIXES = 5;
 
@@ -16,13 +19,14 @@ export const MAX_COMMITS = 3;
 const HEADLINE = "fix: apply castellan review suggestions";
 
 /**
- * Paths a build or CI runs. A suggestion is written from text the model read,
- * including issue and thread bodies anyone can write, so a line here is code
- * that would run with repository secrets before a human reads it. Those stay
- * comments the author can apply themselves.
+ * Paths a fix may write: prose only. A suggestion is written from text the
+ * model read, including issue and thread bodies anyone can write, and a commit
+ * runs whatever CI executes before a human reads it, which is a denylist no one
+ * can keep complete (`src/`, `test/`, `scripts/` and every config they read). So
+ * only files no build reads are writable, and a code suggestion stays a comment
+ * the author can apply themselves.
  */
-const EXECUTED =
-	/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Makefile|Dockerfile[^/]*|[^/]+\.sh|[^/]+\.ya?ml)$/i;
+const NON_EXECUTED = /\.(md|mdx)$/i;
 
 export interface Fix {
 	path: string;
@@ -48,9 +52,9 @@ export interface PlanScope {
 
 /**
  * The suggestions worth applying: one line, anchored to an added line of the
- * diff, in a file this PR changes and no rule protects, in a file CI does not
- * run, and different from what is there now. Everything else stays a comment
- * the author can take or leave.
+ * diff, in a prose file this PR changes that no rule protects, and different
+ * from what is there now. Everything else stays a comment the author can take
+ * or leave.
  */
 export function planFixes(
 	review: OkReviewResult,
@@ -65,7 +69,7 @@ export function planFixes(
 		// finding for a person to weigh, not something to rewrite in place.
 		if (r.severity === "blocker") continue;
 		if (!r.path || r.line === undefined) continue;
-		if (EXECUTED.test(r.path)) continue;
+		if (!NON_EXECUTED.test(r.path)) continue;
 		if (!changed.has(r.path) || protectedPath(r.path)) continue;
 		const expected = added.get(r.path)?.get(r.line);
 		if (expected === undefined) continue;

@@ -129,9 +129,9 @@ Guards, all checked before the first API call:
 - A suggestion is applied only when the line at the head still reads exactly as the diff showed it to the model, so a stale, invented or already-applied anchor produces no commit.
 - Writing stops where it would loop: a commit castellan wrote (its login as author or committer, or a `castellan-fix:` trailer) makes the next run comment instead of pushing, and a PR with 3 such commits gets no further ones.
 - A cached verdict is not a new review, so a sweep does not retry a push that already failed, and a `--dry-run` writes nothing.
-- A path CI runs is never written: `package.json`, a lockfile, `Makefile`, `Dockerfile*`, a `*.sh` or a `*.yml`/`*.yaml` file. The suggestion text comes from what the model read, including issue and review thread bodies anyone can write, so committing a line there would run attacker-influenced code with repository secrets before a human reads it.
+- Only prose is written: a `.md` or `.mdx` file. The suggestion text comes from what the model read, including issue and review thread bodies anyone can write, and a commit runs whatever CI executes before a human reads it. A list of executed paths cannot name every file `pnpm test`, `build` or `eval` loads (`src/`, `test/`, `scripts/`, a vitest config, `.npmrc`), so the write is limited to files no build reads and every code suggestion stays a comment.
 
-Any failure (no write permission, an unreadable or truncated tree, a ref that moved, a fork) leaves the suggestion as a comment. A PR that contains a castellan commit is also never merged on castellan's own verdict: `castellan_written` escalates it until a human with write access who is not its author approves the current head.
+Any failure (no write permission, an unreadable or truncated tree, a ref that moved, a fork) leaves the suggestion as a comment. A PR that contains a castellan commit is also never merged on castellan's own verdict: `castellan_written` escalates it until a human who is not its author and whose repo permission is `write`, `maintain` or `admin` approves the current head.
 
 ### `paths`
 

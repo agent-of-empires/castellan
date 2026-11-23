@@ -55,6 +55,8 @@ interface World {
 	/** Repository ids, so a fork can be told apart from the base repo. */
 	headRepoId?: number | null;
 	baseRepoId?: number | null;
+	/** Repo permission per login, as the collaborators endpoint reports it. */
+	permissions?: Record<string, string>;
 	/** What the model returns, when not the clean verdict. */
 	model?: object;
 }
@@ -84,6 +86,7 @@ function world({
 	model,
 	headRepoId = 1,
 	baseRepoId = 1,
+	permissions = {},
 }: World = {}) {
 	/** Mutated by a test to move the PR to a new head between runs. */
 	const headState = { head: "head1" };
@@ -111,18 +114,34 @@ function world({
 						truncated: false,
 						tree: [
 							{ path: "src/a.ts", mode: "100644", type: "blob", sha: "blob0" },
+							{
+								path: "docs/a.md",
+								mode: "100644",
+								type: "blob",
+								sha: "blob1",
+							},
 						],
 					},
 				};
 			}
 			if (route === "GET /repos/{owner}/{repo}/git/blobs/{file_sha}") {
+				const prose = params.file_sha === "blob1";
 				return {
 					data: {
-						content: Buffer.from("const a = 1;\nconst b = 3;\n").toString(
-							"base64",
-						),
+						content: Buffer.from(
+							prose
+								? "the port is 80\nthe port is 8081\n"
+								: "const a = 1;\nconst b = 3;\n",
+						).toString("base64"),
 					},
 				};
+			}
+			if (
+				route ===
+				"GET /repos/{owner}/{repo}/collaborators/{username}/permission"
+			) {
+				const login = String(params.username);
+				return { data: { permission: permissions[login] ?? "read" } };
 			}
 			if (route === "GET /repos/{owner}/{repo}") {
 				return { data: { default_branch: "main" } };
@@ -360,17 +379,25 @@ describe("evaluatePull", () => {
 			reasons: [
 				{
 					severity: "concern",
-					text: "wrong constant",
-					path: "src/a.ts",
+					text: "wrong port",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 2;",
+					suggestion: "the port is 8080",
 				},
 			],
 		};
 		const w = world({
 			yaml: "mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }\nlimits: { maxLines: 1 }",
 			model: fix,
-			diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;",
+			files: [
+				{
+					filename: "docs/a.md",
+					status: "modified",
+					additions: 1,
+					deletions: 1,
+				},
+			],
+			diff: "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,1 +1,2 @@\n the port is 80\n+the port is 8081",
 		});
 		const r = await evaluatePull(w.env, repo, 3);
 		expect(r.brief?.fixes).toEqual({ sha: "fix1", count: 1 });
@@ -387,7 +414,15 @@ describe("evaluatePull", () => {
 		const shadow = world({
 			yaml: "mode: shadow\ntrustedAuthors: [alice]\nfix: { pushes: true }",
 			model: fix,
-			diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;",
+			files: [
+				{
+					filename: "docs/a.md",
+					status: "modified",
+					additions: 1,
+					deletions: 1,
+				},
+			],
+			diff: "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,1 +1,2 @@\n the port is 80\n+the port is 8081",
 		});
 		await evaluatePull(shadow.env, repo, 3);
 		expect(shadow.routes()).not.toContain(
@@ -460,10 +495,38 @@ describe("evaluatePull", () => {
 					author_association: "MEMBER",
 				},
 			],
+			permissions: { bob: "write" },
 		});
 		const ok = await evaluatePull(approved.env, repo, 3);
 		expect(ok.brief?.outcome.verdict).toBe("merge");
 		expect(approved.routes()).toContain(APPROVE);
+	});
+
+	it("does not clear its own commit on a read only approval", async () => {
+		// `author_association: MEMBER` includes a read-only org member, so the
+		// permission itself decides whether the approval makes the head human.
+		const w = world({
+			yaml: "mode: enforce\ntrustedAuthors: [alice]",
+			commits: [
+				{
+					author: { login: "castellan[bot]" },
+					committer: { login: "castellan[bot]" },
+					commit: { message: "fix: x\n\ncastellan-fix: 1" },
+				},
+			],
+			reviews: [
+				{
+					user: { login: "bob" },
+					state: "APPROVED",
+					commit_id: "head1",
+					author_association: "MEMBER",
+				},
+			],
+			permissions: { bob: "read" },
+		});
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r.brief?.outcome.verdict).toBe("escalate");
+		expect(w.routes()).not.toContain(APPROVE);
 	});
 
 	it("never writes to a fork, a moved head or a dry run", async () => {
@@ -474,17 +537,17 @@ describe("evaluatePull", () => {
 			reasons: [
 				{
 					severity: "concern",
-					text: "wrong constant",
-					path: "src/a.ts",
+					text: "wrong port",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 2;",
+					suggestion: "the port is 8080",
 				},
 			],
 		};
 		const yaml =
 			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }\nlimits: { maxLines: 1 }";
 		const diff =
-			"diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;";
+			"diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,1 +1,2 @@\n the port is 80\n+the port is 8081";
 		const git = "GET /repos/{owner}/{repo}/git/commits/{commit_sha}";
 
 		for (const over of [{ headRepoId: 2 }, { headRepoId: null }]) {
@@ -506,7 +569,7 @@ describe("evaluatePull", () => {
 		const yaml =
 			"mode: enforce\ntrustedAuthors: [alice]\nfix: { pushes: true }";
 		const diff =
-			"diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 3;";
+			"diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,1 +1,2 @@\n the port is 80\n+the port is 8081";
 		const model = {
 			intent_match: true,
 			new_behavior: false,
@@ -514,10 +577,10 @@ describe("evaluatePull", () => {
 			reasons: [
 				{
 					severity: "concern",
-					text: "wrong constant",
-					path: "src/a.ts",
+					text: "wrong port",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 2;",
+					suggestion: "the port is 8080",
 				},
 			],
 		};

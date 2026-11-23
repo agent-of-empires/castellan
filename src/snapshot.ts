@@ -1,3 +1,4 @@
+import { FIX_TRAILER } from "./fix.js";
 import type { GithubTransport, Repo } from "./github.js";
 
 export const BODY_CAP = 3_000;
@@ -44,14 +45,14 @@ export interface Snapshot {
 		startedAt?: number | null;
 	}[];
 	/**
-	 * State, commit and the reviewer's relationship to the repo; review bodies
+	 * State, commit and whether the reviewer can write to the repo; review bodies
 	 * are human text and are left out.
 	 */
 	reviews: {
 		login: string;
 		state: string;
 		commitId: string;
-		association: string;
+		canWrite: boolean;
 	}[];
 	/**
 	 * Every commit on the PR, newest last, as the logins GitHub maps and the full
@@ -65,6 +66,36 @@ export interface Snapshot {
 	commitsTruncated: boolean;
 	/** State of the latest non-COMMENTED CodeRabbit review, if any. */
 	codeRabbit: string | null;
+}
+
+/** Permissions that can approve a merge, as `collaborators/{login}/permission` reports them. */
+const CAN_WRITE = new Set(["admin", "maintain", "write"]);
+
+/**
+ * The repo permission behind each login, keyed by login. A login that cannot be
+ * read, or does not resolve, is not a writer: the approval then does not clear a
+ * commit castellan wrote, which is the safe direction.
+ */
+async function writePermissions(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	logins: string[],
+): Promise<Map<string, boolean>> {
+	const out = new Map<string, boolean>();
+	await Promise.all(
+		[...new Set(logins)].map(async (username) => {
+			try {
+				const { data } = await transport.request(
+					"GET /repos/{owner}/{repo}/collaborators/{username}/permission",
+					{ owner, repo, username },
+				);
+				out.set(username, CAN_WRITE.has(data.permission));
+			} catch {
+				out.set(username, false);
+			}
+		}),
+	);
+	return out;
 }
 
 function cap(text: string, max: number) {
@@ -101,7 +132,15 @@ export async function buildSnapshot(
 	{ owner, repo }: Repo,
 	pullNumber: number,
 	authorClass: AuthorClass,
-	{ allowClosed = false } = {},
+	{
+		allowClosed = false,
+		login,
+	}: {
+		/** Eval replay reviews a merged PR. */
+		allowClosed?: boolean;
+		/** Castellan's own login, so a commit it wrote is recognised. */
+		login?: string;
+	} = {},
 ): Promise<Snapshot> {
 	const pull = { owner, repo, pull_number: pullNumber };
 	const getPull = () =>
@@ -148,11 +187,41 @@ export async function buildSnapshot(
 		throw new Error(`PR #${pullNumber} head moved during snapshot`);
 	}
 
+	const commitList = commits.map((c) => ({
+		logins: [c.author?.login, c.committer?.login].filter(
+			(l): l is string => !!l,
+		),
+		message: c.commit.message,
+	}));
+	const commitsTruncated = commits.length < (pr.commits ?? 0);
+	// Only an approval that would clear a commit castellan wrote needs the
+	// permission behind it, so the extra read happens only on such a PR.
+	const wrote =
+		commitsTruncated ||
+		commitList.some(
+			(c) =>
+				FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
+		);
+	const writable = wrote
+		? await writePermissions(
+				transport,
+				{ owner, repo },
+				reviews
+					.filter(
+						(r) =>
+							r.state === "APPROVED" &&
+							r.commit_id === headSha &&
+							!/\[bot\]$/.test(r.user?.login ?? ""),
+					)
+					.map((r) => r.user?.login ?? "")
+					.filter(Boolean),
+			)
+		: new Map<string, boolean>();
 	const reviewList = reviews.map((r) => ({
 		login: r.user?.login ?? "",
 		state: r.state,
 		commitId: r.commit_id ?? "",
-		association: r.author_association ?? "",
+		canWrite: writable.get(r.user?.login ?? "") ?? false,
 	}));
 	const fullBody = pr.body ?? "";
 	const body = cap(fullBody, BODY_CAP);
@@ -193,13 +262,8 @@ export async function buildSnapshot(
 			startedAt: c.started_at ? Date.parse(c.started_at) : null,
 		})),
 		reviews: reviewList,
-		commitsTruncated: commits.length < (pr.commits ?? 0),
-		commits: commits.map((c) => ({
-			logins: [c.author?.login, c.committer?.login].filter(
-				(l): l is string => !!l,
-			),
-			message: c.commit.message,
-		})),
+		commitsTruncated,
+		commits: commitList,
 		codeRabbit:
 			reviewList.findLast(
 				(r) => r.login === CODERABBIT && r.state !== "COMMENTED",

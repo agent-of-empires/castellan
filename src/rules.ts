@@ -1,5 +1,8 @@
 import { CONFIG_PATH, type Config } from "./config.js";
+import { FIX_TRAILER } from "./fix.js";
 import type { Snapshot } from "./snapshot.js";
+
+export { FIX_TRAILER };
 
 export interface Reason {
 	rule: string;
@@ -130,9 +133,6 @@ const lines = (s: Snapshot) =>
 
 const isBot = (login: string) => login.endsWith("[bot]");
 
-/** The trailer castellan puts on a fix commit, so the commit says who wrote it. */
-export const FIX_TRAILER = /^castellan-fix:/m;
-
 /**
  * A commit on this PR that castellan wrote: its login as author or committer, or
  * the trailer, which survives an unmapped email. Checked on every commit, not
@@ -150,9 +150,6 @@ export function castellanWrote(s: Snapshot, login?: string): boolean {
 	);
 }
 
-/** Relationships that can write to the repo, so an approval from one is binding. */
-const WRITES = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-
 /**
  * A human approval on the current head, which is what lets castellan's own code
  * merge. A bot approval is not one: an App or Action can approve without a person,
@@ -167,7 +164,9 @@ export function humanApprovedHead(s: Snapshot, login?: string): boolean {
 			r.commitId === s.headSha &&
 			r.login !== login &&
 			r.login !== s.author &&
-			WRITES.has(r.association) &&
+			// `author_association` only says member or collaborator, which includes
+			// read and triage, so the permission itself is what counts.
+			r.canWrite &&
 			!isBot(r.login),
 	);
 }

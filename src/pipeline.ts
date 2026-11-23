@@ -198,6 +198,7 @@ export async function evaluatePull(
 			repoRef,
 			pullNumber,
 			authorClass,
+			{ login },
 		);
 		const read = githubReader(transport, repoRef);
 		// Read even without teams.protected: the owning team is what an escalation

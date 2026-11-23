@@ -448,7 +448,7 @@ describe("escalate rules", () => {
 				login: "bob",
 				state: "CHANGES_REQUESTED",
 				commitId: "old",
-				association: "MEMBER",
+				canWrite: true,
 			},
 		],
 	});
@@ -532,14 +532,14 @@ describe("rule details", () => {
 				login: "bob",
 				state: "CHANGES_REQUESTED",
 				commitId: "a",
-				association: "MEMBER",
+				canWrite: true,
 			},
-			{ login: "bob", state: "APPROVED", commitId: "b", association: "MEMBER" },
+			{ login: "bob", state: "APPROVED", commitId: "b", canWrite: true },
 			{
 				login: "coderabbitai[bot]",
 				state: "CHANGES_REQUESTED",
 				commitId: "b",
-				association: "MEMBER",
+				canWrite: true,
 			},
 		];
 		expect(run(snap({ reviews })).outcome).toBe("candidate");
@@ -661,7 +661,7 @@ ${SIZED}`;
 				login: "bob",
 				state: "CHANGES_REQUESTED",
 				commitId: "a",
-				association: "MEMBER",
+				canWrite: true,
 			},
 		],
 	});
@@ -776,7 +776,7 @@ ${SIZED}`;
 					login: "coderabbitai[bot]",
 					state: "APPROVED",
 					commitId: "abc",
-					association: "MEMBER",
+					canWrite: true,
 				},
 			],
 		});
@@ -790,7 +790,7 @@ ${SIZED}`;
 					login: "bob",
 					state: "APPROVED",
 					commitId: "abc",
-					association: "MEMBER",
+					canWrite: true,
 				},
 			],
 		});
@@ -804,7 +804,7 @@ ${SIZED}`;
 				login: string;
 				state: string;
 				commitId: string;
-				association: string;
+				canWrite: boolean;
 			}[],
 		) =>
 			snap({
@@ -813,10 +813,10 @@ ${SIZED}`;
 				],
 				reviews,
 			});
-		const at = (login: string, association: string) =>
+		const at = (login: string, canWrite: boolean) =>
 			rulesOf(
 				run(
-					wrote([{ login, state: "APPROVED", commitId: "abc", association }]),
+					wrote([{ login, state: "APPROVED", commitId: "abc", canWrite }]),
 					c,
 					[],
 					x,
@@ -824,9 +824,9 @@ ${SIZED}`;
 			);
 		// A second account of the author, and an account with no write access, both
 		// approve the head without clearing the writer.
-		expect(at("alice", "OWNER")).toContain("castellan_written");
-		expect(at("someone", "NONE")).toContain("castellan_written");
-		expect(at("bob", "COLLABORATOR")).not.toContain("castellan_written");
+		expect(at("alice", true)).toContain("castellan_written");
+		expect(at("someone", false)).toContain("castellan_written");
+		expect(at("bob", true)).not.toContain("castellan_written");
 	});
 
 	it("treats a commit list the API cut short as castellan having written", async () => {

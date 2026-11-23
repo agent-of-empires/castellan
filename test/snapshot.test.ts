@@ -23,6 +23,7 @@ interface Over {
 	commits?: unknown[];
 	/** `commits` on the PR itself, which the API caps at 250 listed. */
 	commitCount?: number;
+	permissions?: Record<string, string>;
 }
 
 const review = (login: string, state: string, commit_id = "abc") => ({
@@ -51,9 +52,20 @@ function fixture(over: Over = {}) {
 		commits: over.commitCount ?? 1,
 	});
 	const request = vi.fn(
-		async (_route: string, params: { mediaType?: unknown }) => ({
-			data: params.mediaType ? (over.diff ?? "diff --git a b") : pr(),
-		}),
+		async (
+			route: string,
+			params: { mediaType?: unknown; username?: string },
+		) => {
+			if (route.endsWith("/permission"))
+				return {
+					data: {
+						permission: over.permissions?.[params.username ?? ""] ?? "read",
+					},
+				};
+			return {
+				data: params.mediaType ? (over.diff ?? "diff --git a b") : pr(),
+			};
+		},
 	);
 	const paginate = vi.fn(async (route: string, _params?: unknown) => {
 		if (route.endsWith("/files"))
@@ -305,6 +317,38 @@ describe("codeRabbit state", () => {
 });
 
 describe("reviews", () => {
+	it("resolves the permission behind an approval on a head it wrote", async () => {
+		const s = await buildSnapshot(
+			fixture({
+				commits: [
+					{
+						author: { login: "castellan[bot]" },
+						committer: { login: "castellan[bot]" },
+						commit: { message: "fix: x\n\ncastellan-fix: 1" },
+					},
+				],
+				reviews: [review("bob", "APPROVED", "abc")],
+				permissions: { bob: "triage" },
+			}).transport,
+			repo,
+			7,
+			"maintainer",
+			{ login: "castellan[bot]" },
+		);
+		// A triage collaborator is a collaborator, which is not write access.
+		expect(s.reviews[0]?.canWrite).toBe(false);
+	});
+
+	it("does not read a permission when it wrote nothing", async () => {
+		const f = fixture({ reviews: [review("bob", "APPROVED", "abc")] });
+		await buildSnapshot(f.transport, repo, 7, "maintainer", {
+			login: "castellan[bot]",
+		});
+		expect(
+			f.request.mock.calls.some((c) => String(c[0]).endsWith("/permission")),
+		).toBe(false);
+	});
+
 	it("keeps the commit id so approvals can be judged against the current head", async () => {
 		const s = await snap({
 			reviews: [review("bob", "APPROVED", "old"), review("eve", "APPROVED")],

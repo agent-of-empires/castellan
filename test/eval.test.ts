@@ -262,7 +262,7 @@ describe("collectCases", () => {
 				login: "coderabbitai[bot]",
 				state: "APPROVED",
 				commitId: "x",
-				association: "",
+				canWrite: false,
 			},
 		]);
 		expect(first?.requiredChecks).toEqual(["a"]);

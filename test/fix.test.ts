@@ -14,14 +14,14 @@ import type { OkReviewResult } from "../src/llm.js";
 const repo = { owner: "o", repo: "r" };
 
 const diff = [
-	"diff --git a/src/a.ts b/src/a.ts",
-	"--- a/src/a.ts",
-	"+++ b/src/a.ts",
+	"diff --git a/docs/a.md b/docs/a.md",
+	"--- a/docs/a.md",
+	"+++ b/docs/a.md",
 	"@@ -1,2 +1,3 @@",
-	" const a = 1;",
-	"-const b = 2;",
-	"+const b = 3;",
-	"+const c = 4;",
+	" the port is 80",
+	"-the port is 8080",
+	"+the port is 8081",
+	"+and the token is set",
 ].join("\n");
 
 const scope = (
@@ -31,7 +31,7 @@ const scope = (
 		limit?: number;
 	} = {},
 ): PlanScope => ({
-	changed: new Set(over.changed ?? ["src/a.ts"]),
+	changed: new Set(over.changed ?? ["docs/a.md"]),
 	protectedPath: over.protectedPath ?? (() => false),
 	...(over.limit === undefined ? {} : { limit: over.limit }),
 });
@@ -54,23 +54,23 @@ const review = (
 describe("addedLines", () => {
 	it("treats a +++ line inside a hunk as added text, not a file header", () => {
 		const sneaky = [
-			"diff --git a/src/a.ts b/src/a.ts",
-			"--- a/src/a.ts",
-			"+++ b/src/a.ts",
+			"diff --git a/docs/a.md b/docs/a.md",
+			"--- a/docs/a.md",
+			"+++ b/docs/a.md",
 			"@@ -1,1 +1,2 @@",
-			" const a = 1;",
+			" the port is 80",
 			"+++ b/.castellan.yml",
 		].join("\n");
 		const added = addedLines(sneaky);
-		expect([...added.keys()]).toEqual(["src/a.ts"]);
-		expect(added.get("src/a.ts")?.get(2)).toBe("++ b/.castellan.yml");
+		expect([...added.keys()]).toEqual(["docs/a.md"]);
+		expect(added.get("docs/a.md")?.get(2)).toBe("++ b/.castellan.yml");
 	});
 
 	it("maps each added line to its text on the new side", () => {
 		const added = addedLines(diff);
-		expect([...(added.get("src/a.ts") ?? [])]).toEqual([
-			[2, "const b = 3;"],
-			[3, "const c = 4;"],
+		expect([...(added.get("docs/a.md") ?? [])]).toEqual([
+			[2, "the port is 8081"],
+			[3, "and the token is set"],
 		]);
 	});
 
@@ -80,7 +80,7 @@ describe("addedLines", () => {
 			"--- a/gone.ts",
 			"+++ /dev/null",
 			"@@ -1 +0,0 @@",
-			"-const a = 1;",
+			"-the port is 80",
 		].join("\n");
 		expect(addedLines(d).size).toBe(0);
 	});
@@ -93,17 +93,17 @@ describe("planFixes", () => {
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 2;",
+					suggestion: "the port is 8080",
 				},
-				{ severity: "nit", text: "n", suggestion: "const z = 9;" },
+				{ severity: "nit", text: "n", suggestion: "and the token is unset" },
 				{
 					severity: "nit",
 					text: "n",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 5;",
+					suggestion: "the port is 8082",
 				},
 			]),
 			addedLines(diff),
@@ -111,10 +111,10 @@ describe("planFixes", () => {
 		);
 		expect(fixes).toEqual([
 			{
-				path: "src/a.ts",
+				path: "docs/a.md",
 				line: 2,
-				expected: "const b = 3;",
-				suggestion: "const b = 2;",
+				expected: "the port is 8081",
+				suggestion: "the port is 8080",
 			},
 		]);
 	});
@@ -125,21 +125,21 @@ describe("planFixes", () => {
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 99,
 					suggestion: "x",
 				},
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 3;",
+					suggestion: "the port is 8081",
 				},
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 3,
 					suggestion: "a\nb",
 				},
@@ -155,14 +155,14 @@ describe("planFixes", () => {
 			{
 				severity: "concern" as const,
 				text: "b",
-				path: "src/a.ts",
+				path: "docs/a.md",
 				line: 2,
 				suggestion: "x",
 			},
 			{
 				severity: "concern" as const,
 				text: "b",
-				path: "src/a.ts",
+				path: "docs/a.md",
 				line: 3,
 				suggestion: "y",
 			},
@@ -185,9 +185,9 @@ describe("planFixes", () => {
 				{
 					severity: "blocker",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 2,
-					suggestion: "const b = 2;",
+					suggestion: "the port is 8080",
 				},
 			]),
 			addedLines(diff),
@@ -196,7 +196,36 @@ describe("planFixes", () => {
 		expect(fixes).toEqual([]);
 	});
 
-	it("keeps a suggestion off a path CI runs", () => {
+	it("keeps a code suggestion a comment, whatever CI runs", () => {
+		// The allowlist is prose, so nothing a build or CI executes is writable: a
+		// denylist cannot name every file `pnpm test`, `build` or `eval` reads.
+		for (const path of ["src/a.ts", "test/a.test.ts", "scripts/x.mjs"]) {
+			const text = [
+				`diff --git a/${path} b/${path}`,
+				`--- a/${path}`,
+				`+++ b/${path}`,
+				"@@ -1,1 +1,2 @@",
+				" const a = 1;",
+				"+const b = 2;",
+			].join("\n");
+			const fixes = planFixes(
+				review([
+					{
+						severity: "concern",
+						text: "b",
+						path,
+						line: 2,
+						suggestion: "const b = 3;",
+					},
+				]),
+				addedLines(text),
+				scope({ changed: [path] }),
+			);
+			expect(fixes).toEqual([]);
+		}
+	});
+
+	it("keeps a suggestion off a config a build reads", () => {
 		const path = "package.json";
 		const text = [
 			"diff --git a/package.json b/package.json",
@@ -228,14 +257,14 @@ describe("planFixes", () => {
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 2,
 					suggestion: "one",
 				},
 				{
 					severity: "concern",
 					text: "b",
-					path: "src/a.ts",
+					path: "docs/a.md",
 					line: 3,
 					suggestion: "two",
 				},
@@ -249,36 +278,38 @@ describe("planFixes", () => {
 
 describe("replaceLines", () => {
 	const fix = {
-		path: "src/a.ts",
+		path: "docs/a.md",
 		line: 2,
-		expected: "const b = 3;",
-		suggestion: "const b = 2;",
+		expected: "the port is 8081",
+		suggestion: "the port is 8080",
 	};
 
 	it("replaces the line it was written about", () => {
-		expect(replaceLines("const a = 1;\nconst b = 3;\n", [fix])).toBe(
-			"const a = 1;\nconst b = 2;\n",
+		expect(replaceLines("the port is 80\nthe port is 8081\n", [fix])).toBe(
+			"the port is 80\nthe port is 8080\n",
 		);
 	});
 
 	it("refuses a line that no longer reads the same", () => {
-		expect(replaceLines("const a = 1;\nconst b = 7;\n", [fix])).toBeUndefined();
-		expect(replaceLines("const a = 1;\n", [fix])).toBeUndefined();
+		expect(
+			replaceLines("the port is 80\nthe port is 9999\n", [fix]),
+		).toBeUndefined();
+		expect(replaceLines("the port is 80\n", [fix])).toBeUndefined();
 	});
 
 	it("keeps CRLF endings", () => {
-		expect(replaceLines("const a = 1;\r\nconst b = 3;\r\n", [fix])).toBe(
-			"const a = 1;\r\nconst b = 2;\r\n",
+		expect(replaceLines("the port is 80\r\nthe port is 8081\r\n", [fix])).toBe(
+			"the port is 80\r\nthe port is 8080\r\n",
 		);
 	});
 });
 
 const fixes = [
 	{
-		path: "src/a.ts",
+		path: "docs/a.md",
 		line: 2,
-		expected: "const b = 3;",
-		suggestion: "const b = 2;",
+		expected: "the port is 8081",
+		suggestion: "the port is 8080",
 	},
 ];
 
@@ -303,7 +334,8 @@ function transport(
 		truncated?: boolean;
 	} = {},
 ) {
-	const bytes = over.content ?? Buffer.from("const a = 1;\nconst b = 3;\n");
+	const bytes =
+		over.content ?? Buffer.from("the port is 80\nthe port is 8081\n");
 	let written: { path: string; contents: string }[] = [];
 	const request = vi.fn(async (route: string) => {
 		if (over.fail && route.includes(over.fail)) throw new Error("boom");
@@ -315,7 +347,7 @@ function transport(
 					truncated: over.truncated ?? false,
 					tree: [
 						{
-							path: "src/a.ts",
+							path: "docs/a.md",
 							mode: over.mode ?? "100644",
 							type: "blob",
 							sha: "blob0",
@@ -359,10 +391,10 @@ describe("pushFixes", () => {
 		const r = await pushFixes(t.transport, repo, pushScope());
 		expect(r).toEqual({ sha: "commit1", count: 1 });
 		expect(t.additions()).toEqual([
-			{ path: "src/a.ts", contents: expect.any(String) },
+			{ path: "docs/a.md", contents: expect.any(String) },
 		]);
 		expect(decode(t.additions()[0]?.contents ?? "")).toBe(
-			"const a = 1;\nconst b = 2;\n",
+			"the port is 80\nthe port is 8080\n",
 		);
 		const input = t.graphql.mock.calls[0]?.[1] as {
 			input: { expectedHeadOid: string; branch: { branchName: string } };
@@ -417,7 +449,7 @@ describe("pushFixes", () => {
 			input: { fileChanges: { additions: { path: string }[] } };
 		};
 		expect(input.input.fileChanges.additions.map((a) => a.path)).toEqual([
-			"src/a.ts",
+			"docs/a.md",
 		]);
 	});
 
@@ -442,7 +474,7 @@ describe("pushFixes", () => {
 
 	it("writes nothing when the line already reads as the suggestion", async () => {
 		const t = transport({
-			content: Buffer.from("const a = 1;\nconst b = 2;\n"),
+			content: Buffer.from("the port is 80\nthe port is 8080\n"),
 		});
 		expect(await pushFixes(t.transport, repo, pushScope())).toBeUndefined();
 	});
