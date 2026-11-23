@@ -194,10 +194,18 @@ export async function evaluatePull(
 		);
 		const read = githubReader(transport, repoRef);
 		// Read even without teams.protected: the owning team is what an escalation
-		// asks for a review, and what the brief names.
+		// asks for a review, and what the brief names. Without the setting nothing
+		// depends on it but a best effort request, so a read error means no team
+		// rather than a failed run.
 		let codeowners: CodeownersRule[] = [];
 		for (const path of CODEOWNERS_PATHS) {
-			const text = await read(pr.base.ref, path);
+			let text: string | null;
+			try {
+				text = await read(pr.base.ref, path);
+			} catch (err) {
+				if (config.teams.protected) throw err;
+				text = null;
+			}
 			if (text !== null) {
 				codeowners = parseCodeowners(text);
 				break;
@@ -339,6 +347,8 @@ export async function evaluatePull(
 			// the request.
 			requested:
 				cached?.headSha === head.headSha ? cached.requested : undefined,
+			requestedParts:
+				cached?.headSha === head.headSha ? cached.requestedParts : undefined,
 		};
 		const dedup = await getOrRun({
 			cached,
@@ -411,12 +421,15 @@ export async function evaluatePull(
 			reviewError: result && !result.ok ? result.error : undefined,
 			source: dedup.source,
 			shadow: config.mode === "shadow",
-			// Shown on the verdict line so an escalation names who it was asked of.
-			ownerTeam: ownedTeam(
-				snapshot.files.map((f) => f.path),
-				codeowners,
-				repoRef.owner,
-			),
+			// The team an escalation asks, so the verdict line names the team asked
+			// rather than only a CODEOWNERS one.
+			ownerTeam:
+				ownedTeam(
+					snapshot.files.map((f) => f.path),
+					codeowners,
+					repoRef.owner,
+				) ?? config.reviewers.team,
+			// The related PR this change looks like, when one was found.
 			related: related.length ? related : undefined,
 		};
 		if (opts.dryRun) return { status: "dry_run", brief };
