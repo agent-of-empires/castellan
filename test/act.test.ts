@@ -92,6 +92,8 @@ interface World {
 	reviewError?: Error;
 	graphqlError?: Error;
 	reviewersError?: Error;
+	/** The reviews listing fails, as a 500 would. */
+	reviewsError?: Error;
 }
 
 function fake({
@@ -105,6 +107,7 @@ function fake({
 	reviewError,
 	graphqlError,
 	reviewersError,
+	reviewsError,
 }: World = {}) {
 	// Reviews this run posts, so a later read sees them as GitHub would.
 	const posted: unknown[] = [];
@@ -143,7 +146,10 @@ function fake({
 		},
 	);
 	const paginate = vi.fn(async (route: string) => {
-		if (route.endsWith("/reviews")) return [...reviews, ...posted];
+		if (route.endsWith("/reviews")) {
+			if (reviewsError) throw reviewsError;
+			return [...reviews, ...posted];
+		}
 		if (route.endsWith("/comments")) return comments;
 		return [];
 	});
@@ -264,6 +270,58 @@ describe("an earlier blocker", () => {
 			{ brief: b },
 		);
 		// The anchor is taken, so nothing can be attached; the head still blocks.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
+	});
+
+	it("keeps the findings in the brief when the blocker lookup fails", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request, sent } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviewsError: new Error("500"),
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The read is inside the post's try, so a failure leaves the finding in the
+		// brief instead of ending the run before it publishes anything.
+		expect(request).not.toHaveBeenCalledWith(APPROVE, expect.anything());
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
+	});
+
+	it("blocks a head it approved earlier when the later run reports a blocker", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				// A thread change re-ran the review on this head: the block came first, the
+				// approval after it, so the reviewer's latest state is an approval.
+				reviews: [
+					blocker({ commit_id: "head1" }),
+					{
+						id: 7,
+						user: { login: author.login },
+						commit_id: "head1",
+						state: "APPROVED",
+					},
+				],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The approval is the reviewer's latest state, so it is not a live block.
 		expect(request).toHaveBeenCalledWith(
 			APPROVE,
 			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
