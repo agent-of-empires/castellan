@@ -138,16 +138,25 @@ const isBot = (login: string) => login.endsWith("[bot]");
  * the trailer, which survives an unmapped email. Checked on every commit, not
  * just the head, so a later author commit does not launder it.
  */
-export function castellanWrote(s: Snapshot, login?: string): boolean {
+/** Whether any listed commit is castellan's, by login or fix trailer. */
+export function wroteCommits(
+	commits: Snapshot["commits"],
+	truncated: boolean,
+	login?: string,
+): boolean {
 	// A cut commit list drops the newest commits, which are the ones castellan
 	// wrote, so an incomplete list is treated as if it wrote one.
 	return (
-		s.commitsTruncated ||
-		s.commits.some(
+		truncated ||
+		commits.some(
 			(c) =>
 				FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
 		)
 	);
+}
+
+export function castellanWrote(s: Snapshot, login?: string): boolean {
+	return wroteCommits(s.commits, s.commitsTruncated, login);
 }
 
 /**

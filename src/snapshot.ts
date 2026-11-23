@@ -1,5 +1,5 @@
-import { FIX_TRAILER } from "./fix.js";
 import type { GithubTransport, Repo } from "./github.js";
+import { wroteCommits } from "./rules.js";
 
 export const BODY_CAP = 3_000;
 export const DIFF_CAP = 30_000;
@@ -90,7 +90,13 @@ async function writePermissions(
 					{ owner, repo, username },
 				);
 				out.set(username, CAN_WRITE.has(data.permission));
-			} catch {
+			} catch (err) {
+				// No trace would leave every castellan-written head escalated with
+				// nothing saying why, so the status is logged.
+				console.warn("permission lookup failed", {
+					username,
+					status: (err as { status?: number }).status,
+				});
 				out.set(username, false);
 			}
 		}),
@@ -195,13 +201,9 @@ export async function buildSnapshot(
 	}));
 	const commitsTruncated = commits.length < (pr.commits ?? 0);
 	// Only an approval that would clear a commit castellan wrote needs the
-	// permission behind it, so the extra read happens only on such a PR.
-	const wrote =
-		commitsTruncated ||
-		commitList.some(
-			(c) =>
-				FIX_TRAILER.test(c.message) || (!!login && c.logins.includes(login)),
-		);
+	// permission behind it, so the extra read happens only on such a PR. The
+	// rule's own predicate is reused so the two cannot drift apart.
+	const wrote = wroteCommits(commitList, commitsTruncated, login);
 	const writable = wrote
 		? await writePermissions(
 				transport,

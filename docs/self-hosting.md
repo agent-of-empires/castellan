@@ -50,7 +50,7 @@ Create an App, install it on the repos in `CASTELLAN_REPOS`, and set:
 - **Webhook URL:** the Function URL. **Webhook secret:** the same value as `webhook_secret`.
 - **Events:** `pull_request`, `check_suite`, `pull_request_review`, `status`, `issues`.
 - **Repository permissions**, from the API calls the code makes:
-  - Metadata: read.
+  - Metadata: read. `GET /repos/{owner}/{repo}/collaborators/{username}/permission` reads this, and castellan calls it for the approvals on a head that carries a castellan commit, so an approval counts only from `write`, `maintain` or `admin`.
   - Contents: read (the config, CODEOWNERS, and the post-image of the changed files the model reads). The immediate merge fallback calls the merge endpoint, which GitHub documents as needing Contents: write; grant it for `enforce`. `fix.pushes` also needs Contents: write for the git data endpoints (`git/commits`, `git/trees`, `git/blobs`) and for `createCommitOnBranch`; without it every push fails quietly and the suggestion stays a comment, which is the documented fallback.
   - Pull requests: write (read PRs, files, reviews and review comments; post reviews; request reviewers and team reviewers; approve; enable auto-merge).
   - Issues: write (sticky comment, triage comments and labels).
