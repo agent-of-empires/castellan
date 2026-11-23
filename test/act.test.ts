@@ -82,42 +82,77 @@ const modelBrief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 
 interface World {
 	head?: string;
+	/** The head moves to `movedTo` after this many reads of the pull request. */
+	reads?: number;
+	movedTo?: string;
 	state?: string;
 	autoMerge?: object | null;
 	reviews?: unknown[];
+	comments?: unknown[];
 	reviewError?: Error;
 	graphqlError?: Error;
 	reviewersError?: Error;
+	/** The reviews listing fails, as a 500 would. */
+	reviewsError?: Error;
 }
 
 function fake({
 	head = "head1",
+	reads,
+	movedTo,
 	state = "open",
 	autoMerge = null,
 	reviews = [],
+	comments = [],
 	reviewError,
 	graphqlError,
 	reviewersError,
+	reviewsError,
 }: World = {}) {
-	const request = vi.fn(async (route: string, _params?: unknown) => {
-		if (route === REVIEWERS && reviewersError) throw reviewersError;
-		if (route.startsWith("GET /repos/{owner}/{repo}/pulls/")) {
-			return {
-				data: {
-					state,
-					merged: false,
-					node_id: "PR_1",
-					auto_merge: autoMerge,
-					head: { sha: head },
-				},
-			};
-		}
-		if (route === APPROVE && reviewError) throw reviewError;
-		return { data: { id: 7, html_url: commentUrl } };
-	});
-	const paginate = vi.fn(async (route: string) =>
-		route.endsWith("/reviews") ? reviews : [],
+	// Reviews this run posts, so a later read sees them as GitHub would.
+	const posted: unknown[] = [];
+	let pullReads = 0;
+	const request = vi.fn(
+		async (route: string, p: { event?: string; commit_id?: string } = {}) => {
+			if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") {
+				pullReads += 1;
+				const sha = reads !== undefined && pullReads > reads ? movedTo : head;
+				return {
+					data: {
+						state,
+						merged: false,
+						node_id: "PR_1",
+						auto_merge: autoMerge,
+						head: { sha },
+					},
+				};
+			}
+			if (route === REVIEWERS && reviewersError) throw reviewersError;
+			if (route === APPROVE) {
+				if (reviewError) throw reviewError;
+				posted.push({
+					id: 100 + posted.length,
+					user: { login: author.login },
+					commit_id: p.commit_id,
+					state:
+						p.event === "COMMENT"
+							? "COMMENTED"
+							: p.event === "REQUEST_CHANGES"
+								? "CHANGES_REQUESTED"
+								: "APPROVED",
+				});
+			}
+			return { data: { id: 7, html_url: commentUrl } };
+		},
 	);
+	const paginate = vi.fn(async (route: string) => {
+		if (route.endsWith("/reviews")) {
+			if (reviewsError) throw reviewsError;
+			return [...reviews, ...posted];
+		}
+		if (route.endsWith("/comments")) return comments;
+		return [];
+	});
 	const graphql = vi.fn(async () => {
 		if (graphqlError) throw graphqlError;
 		return {};
@@ -195,6 +230,140 @@ describe("an earlier blocker", () => {
 		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
 	});
 
+	it("stands when its anchor was already posted at an earlier head", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request, sent } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviews: [blocker()],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The dedup is per anchor, so no comment is posted again; the block moves to
+		// this head as a body-only review rather than leaning on the earlier one.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
+	});
+
+	it("blocks when the anchor has a comment but no earlier block", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviews: [{ id: 6, user: { login: author.login }, state: "COMMENTED" }],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The anchor is taken, so nothing can be attached; the head still blocks.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
+	});
+
+	it("keeps the findings in the brief when the blocker lookup fails", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request, sent } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviewsError: new Error("500"),
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The read is inside the post's try, so a failure leaves the finding in the
+		// brief instead of ending the run before it publishes anything.
+		expect(request).not.toHaveBeenCalledWith(APPROVE, expect.anything());
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
+	});
+
+	it("blocks a head it approved earlier when the later run reports a blocker", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				// A thread change re-ran the review on this head: the block came first, the
+				// approval after it, so the reviewer's latest state is an approval.
+				reviews: [
+					blocker({ commit_id: "head1" }),
+					{
+						id: 7,
+						user: { login: author.login },
+						commit_id: "head1",
+						state: "APPROVED",
+					},
+				],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The approval is the reviewer's latest state, so it is not a live block.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
+	});
+
+	it("does not post a second block at a head that already carries one", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviews: [blocker({ commit_id: "head1" })],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		expect(request).not.toHaveBeenCalledWith(APPROVE, expect.anything());
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+	});
+
+	it("is dismissed when this head also posts a findings review", async () => {
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{ reviews: [blocker()] },
+			{ brief: modelBrief("escalate") },
+		);
+		// The findings review is newer than the blocker, and a later `COMMENT`
+		// does not lift a changes request, so the stale blocker is still dismissed.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "COMMENT" }),
+		);
+		expect(request).toHaveBeenCalledWith(
+			DISMISS,
+			expect.objectContaining({ review_id: 5 }),
+		);
+	});
+
 	it("is ignored when it belongs to another reviewer or is an approval", async () => {
 		const other = await run("mode: enforce", {
 			reviews: [blocker({ user: { login: "someone" } })],
@@ -268,7 +437,8 @@ describe("inline findings", () => {
 			{ reviewError: new Error("422") },
 			{ brief: modelBrief("escalate") },
 		);
-		const body = sent(COMMENT)[0]?.body ?? "";
+		// The state block carries the finding either way, so assert on the brief.
+		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
 		expect(body).toContain("the port is not recorded");
 		expect(body).not.toContain("Inline findings");
 	});
@@ -276,6 +446,76 @@ describe("inline findings", () => {
 	it("posts no review when nothing could be anchored", async () => {
 		const { routes } = await run("mode: shadow\nreview: { inline: true }");
 		expect(routes()).not.toContain(APPROVE);
+	});
+
+	it("lists the findings when a failed approval posted none inline", async () => {
+		const { sent } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{ reviewError: new Error("422") },
+			{ brief: modelBrief() },
+		);
+		const body = (sent(COMMENT).at(-1)?.body ?? "").split("<!-- castellan")[0];
+		expect(body).toContain("the port is not recorded");
+		expect(body).not.toContain("Inline findings");
+	});
+});
+
+describe("a head that moved while the model ran", () => {
+	it("does not lift a blocker posted for a newer head after the brief", async () => {
+		const { request, routes, result } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reads: 1,
+				movedTo: "head2",
+				reviews: [
+					{
+						id: 5,
+						user: { login: author.login },
+						commit_id: "head0",
+						state: "CHANGES_REQUESTED",
+					},
+				],
+			},
+			{ brief: modelBrief("escalate") },
+		);
+		// The findings review is posted before the head moves, the dismissal is not.
+		expect(routes()).toContain(APPROVE);
+		expect(routes()).toContain(COMMENT);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+		expect(result.skipped).toBe("stale_head");
+	});
+
+	it("posts and dismisses nothing in enforce", async () => {
+		const { request, routes, result } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				head: "head2",
+				reviews: [
+					{
+						id: 5,
+						user: { login: author.login },
+						commit_id: "head0",
+						state: "CHANGES_REQUESTED",
+					},
+				],
+			},
+			{ brief: modelBrief("escalate") },
+		);
+		expect(routes()).not.toContain(APPROVE);
+		expect(routes()).not.toContain(STATUS);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+		expect(result.skipped).toBe("stale_head");
+	});
+
+	it("posts nothing in shadow either", async () => {
+		const { routes, result } = await run(
+			"mode: shadow\nreview: { inline: true }",
+			{ head: "head2" },
+			{ brief: modelBrief("escalate") },
+		);
+		expect(routes()).not.toContain(APPROVE);
+		expect(routes()).not.toContain(STATUS);
+		expect(result.skipped).toBe("stale_head");
 	});
 });
 
@@ -607,6 +847,32 @@ describe("escalation reviewers", () => {
 	it("asks nobody when no reviewer is configured", async () => {
 		const { routes } = await run("mode: enforce", {}, { verdict: "escalate" });
 		expect(routes()).not.toContain(REVIEWERS);
+	});
+
+	it("keeps naming the team when only the users half is retried", async () => {
+		const f = fake({ reviewersError: new Error("422") });
+		const config = await load("mode: enforce\nreviewers:\n  users: [bob]");
+		const b = { ...brief("escalate"), ownerTeam: "platform" };
+		// The team half landed on an earlier event for this head, so this run only
+		// retries the login that was refused.
+		b.key.requested = "head1";
+		b.key.requestedParts = ["team:platform"];
+		await act(f.transport, repo, {
+			pullNumber: 3,
+			snapshot: snapshot(),
+			config,
+			ctx,
+			brief: b,
+			author,
+		});
+		const calls = f.routes().filter((r) => r === REVIEWERS);
+		expect(calls).toHaveLength(1);
+		expect(f.request).toHaveBeenCalledWith(
+			REVIEWERS,
+			expect.objectContaining({ reviewers: ["bob"] }),
+		);
+		const body = (f.sent(COMMENT).at(-1)?.body ?? "") as string;
+		expect(body).toContain("Owner team: platform");
 	});
 
 	it("still escalates when the request fails", async () => {
