@@ -64,6 +64,16 @@ prompt: { base: be strict, guidance: ["no em dashes"] }
 		});
 	});
 
+	it("keeps the shipped size gate when the file sets neither", async () => {
+		// A repo without a `limits` block gets this gate, so a change to either
+		// default loosens it silently unless it is pinned here.
+		const r = await loadConfig("main", reader("mode: enforce"));
+		expect(r).toMatchObject({
+			ok: true,
+			config: { size: "fixed", limits: { maxFiles: 5 } },
+		});
+	});
+
 	it("takes the three size modes and nothing else", async () => {
 		for (const size of ["off", "fixed", "model"]) {
 			const r = await loadConfig("main", reader(`size: ${size}`));
