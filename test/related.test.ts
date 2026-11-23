@@ -4,14 +4,8 @@ import { RELATED_LIMIT, relatedOpenPrs, SCAN_LIMIT } from "../src/related.js";
 
 const repo = { owner: "o", repo: "r" };
 
-const pr = (
-	number: number,
-	title: string,
-	paths: string[],
-	baseRefName = "main",
-) => ({
+const pr = (number: number, paths: string[], baseRefName = "main") => ({
 	number,
-	title,
 	baseRefName,
 	files: { nodes: paths.map((path) => ({ path })) },
 });
@@ -28,33 +22,33 @@ function transport(nodes: unknown[] | Error): GithubTransport {
 describe("relatedOpenPrs", () => {
 	it("names the open PRs that change the same path", async () => {
 		const t = transport([
-			pr(9, "other work", ["src/a.ts", "docs/x.md"]),
-			pr(10, "unrelated", ["src/z.ts"]),
+			pr(9, ["src/a.ts", "docs/x.md"]),
+			pr(10, ["src/z.ts"]),
 		]);
 		expect(await relatedOpenPrs(t, repo, 3, "main", ["src/a.ts"])).toEqual([
-			{ number: 9, title: "other work", overlap: ["src/a.ts"] },
+			{ number: 9, overlap: ["src/a.ts"] },
 		]);
 	});
 
 	it("leaves out a PR on another base, such as a stacked child", async () => {
 		const t = transport([
-			pr(9, "child", ["src/a.ts"], "feat/this-one"),
-			pr(10, "release", ["src/a.ts"], "release/1.0"),
-			pr(11, "sibling", ["src/a.ts"], "main"),
+			pr(9, ["src/a.ts"], "feat/this-one"),
+			pr(10, ["src/a.ts"], "release/1.0"),
+			pr(11, ["src/a.ts"], "main"),
 		]);
 		expect(await relatedOpenPrs(t, repo, 3, "main", ["src/a.ts"])).toEqual([
-			{ number: 11, title: "sibling", overlap: ["src/a.ts"] },
+			{ number: 11, overlap: ["src/a.ts"] },
 		]);
 	});
 
 	it("leaves out the PR under review", async () => {
-		const t = transport([pr(3, "me", ["src/a.ts"])]);
+		const t = transport([pr(3, ["src/a.ts"])]);
 		expect(await relatedOpenPrs(t, repo, 3, "main", ["src/a.ts"])).toEqual([]);
 	});
 
 	it("orders by overlap and stops at the limit", async () => {
 		const nodes = Array.from({ length: RELATED_LIMIT + 3 }, (_, i) =>
-			pr(100 + i, `p${i}`, i === 4 ? ["a.ts", "b.ts"] : ["a.ts"]),
+			pr(100 + i, i === 4 ? ["a.ts", "b.ts"] : ["a.ts"]),
 		);
 		const out = await relatedOpenPrs(transport(nodes), repo, 3, "main", [
 			"a.ts",
@@ -63,7 +57,6 @@ describe("relatedOpenPrs", () => {
 		expect(out).toHaveLength(RELATED_LIMIT);
 		expect(out[0]).toEqual({
 			number: 104,
-			title: "p4",
 			overlap: ["a.ts", "b.ts"],
 		});
 	});

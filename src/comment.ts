@@ -173,6 +173,10 @@ function provenance({ key, review, source }: Brief): string[] {
 
 export function renderComment(brief: Brief): string {
 	const { outcome, key, review, ownerTeam, shadow } = brief;
+	// The team is what an escalation asks for a review, so it is named only when
+	// one is asked: not on a merge, and not in shadow, which requests nothing.
+	const askedTeam =
+		!shadow && outcome.verdict === "escalate" ? ownerTeam : undefined;
 	const sent = inlineTexts(brief);
 	const listed = outcome.reasons.filter(
 		(r) => !(r.rule.startsWith("llm_") && sent.has(r.text)),
@@ -182,7 +186,7 @@ export function renderComment(brief: Brief): string {
 	const head = [
 		"## Castellan brief",
 		"",
-		`**Verdict: ${outcome.verdict}**${shadow ? " (shadow)" : ""}${ownerTeam ? ` | Owner team: ${escapeText(ownerTeam)}` : ""}`,
+		`**Verdict: ${outcome.verdict}**${shadow ? " (shadow)" : ""}${askedTeam ? ` | Owner team: ${escapeText(askedTeam)}` : ""}`,
 		"",
 		...(shown.length
 			? [
