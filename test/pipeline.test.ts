@@ -43,6 +43,8 @@ interface World {
 	files?: SnapshotFile[];
 	/** Issue comments, e.g. castellan's own sticky comment. */
 	comments?: { id: number; body: string; user: { login: string } }[];
+	/** Thrown by the CODEOWNERS read instead of returning content. */
+	codeownersError?: { status: number };
 }
 
 function world({
@@ -65,6 +67,7 @@ function world({
 		},
 	],
 	comments = [],
+	codeownersError,
 }: World = {}) {
 	/** Mutated by a test to move the PR to a new head between runs. */
 	const headState = { head: "head1" };
@@ -88,8 +91,10 @@ function world({
 			}
 			if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
 				const file = String(params.path);
-				if (/CODEOWNERS$/.test(file) && codeowners !== undefined)
-					return { data: codeowners };
+				if (/CODEOWNERS$/.test(file)) {
+					if (codeownersError !== undefined) throw codeownersError;
+					if (codeowners !== undefined) return { data: codeowners };
+				}
 				if (yaml === null) throw { status: 404 };
 				return { data: yaml };
 			}
@@ -487,6 +492,29 @@ describe("evaluatePull", () => {
 		);
 	});
 
+	it("evaluates without an owner team when the CODEOWNERS read fails unprotected", async () => {
+		// Without `teams.protected` the owner team only feeds a best effort review
+		// request, so an unreadable CODEOWNERS must not fail the run.
+		const w = world({ codeownersError: { status: 500 } });
+		const r = await evaluatePull(w.env, repo, 3);
+		expect(r).toMatchObject({ status: "acted" });
+		expect(r.brief?.ownerTeam).toBeUndefined();
+		expect(w.create).toHaveBeenCalled();
+	});
+
+	it("fails the run when the CODEOWNERS read fails under teams.protected", async () => {
+		// The protected-paths rule reads CODEOWNERS, so an unreadable one has to
+		// stay fail-closed rather than silently dropping the rule.
+		const w = world({
+			yaml: "teams: { protected: core }",
+			codeownersError: { status: 500 },
+		});
+		await expect(evaluatePull(w.env, repo, 3)).rejects.toMatchObject({
+			status: 500,
+		});
+		expect(w.create).not.toHaveBeenCalled();
+	});
+
 	it("posts nothing for a skipped PR and never calls the model", async () => {
 		const w = world({ draft: true });
 		expect(await evaluatePull(w.env, repo, 3)).toMatchObject({
@@ -693,6 +721,49 @@ describe("evaluatePull", () => {
 		);
 	});
 
+	it("carries a finding past a head whose model run failed", async () => {
+		const w = world();
+		w.create.mockResolvedValueOnce({
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						intent_match: true,
+						new_behavior: false,
+						reasons: [
+							{
+								severity: "blocker",
+								text: "null deref",
+								path: "src/a.ts",
+								line: 12,
+							},
+						],
+					}),
+				},
+			],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		});
+		await evaluatePull(w.env, repo, 3);
+		// The next head's review fails, so its block publishes the carry instead of
+		// an `llm` part; the head after that must still see what head A found.
+		w.headState.head = "head2";
+		w.create.mockRejectedValueOnce(new Error("down"));
+		await evaluatePull(w.env, repo, 3);
+		w.headState.head = "head3";
+		await evaluatePull(w.env, repo, 3);
+		const last = w.create.mock.calls.length - 1;
+		expect(w.sent(last)).toContain("null deref");
+		expect(w.sent(last)).toContain("at head1");
+	});
+
+	it("serves a same-head re-run from the cache, so no finding is restated", async () => {
+		const w = world();
+		await evaluatePull(w.env, repo, 3);
+		await evaluatePull(w.env, repo, 3);
+		expect(w.create).toHaveBeenCalledTimes(1);
+		expect(w.sent()).not.toContain("An earlier automated review");
+	});
+
 	it("keeps the cached verdict when the thread read fails on a known head", async () => {
 		const w = world({ yaml: "mode: shadow" });
 		await evaluatePull(w.env, repo, 3);
@@ -880,13 +951,14 @@ describe("file context", () => {
 describe("asking for a reviewer", () => {
 	it("asks once per head, including after the block is read back", async () => {
 		const w = world({
-			yaml: "mode: enforce\nlimits: { maxLines: 1 }\nreviewers: { team: platform }",
+			yaml: "mode: enforce\nlimits: { maxLines: 1 }\nreviewers: { team: platform, users: [bob] }",
 		});
 		await evaluatePull(w.env, repo, 3);
 		// The second run reads its own block back, as a sweep on the same head would.
 		await evaluatePull(w.env, repo, 3);
 		const asked = w.request.mock.calls.filter((c) => c[0] === REVIEWERS);
-		expect(asked).toHaveLength(1);
+		// Both halves landed, so neither is asked again.
+		expect(asked).toHaveLength(2);
 	});
 });
 

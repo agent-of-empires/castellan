@@ -8,6 +8,14 @@ export const PREVIOUS_ITEM_CAP = 900;
 const RANK: Record<string, number> = { blocker: 0, concern: 1, nit: 2 };
 
 /**
+ * One field of a carried finding: one line, inside [`PREVIOUS_ITEM_CAP`]. A
+ * newline in model text or in a stored path would otherwise read as another
+ * numbered finding, and either can eat the field.
+ */
+const oneField = (value: string) =>
+	value.replace(/\s+/g, " ").trim().slice(0, PREVIOUS_ITEM_CAP);
+
+/**
  * The `previousFindings` prompt field: what an earlier review of this pull
  * request reported, at this head or an older one, or undefined when there is
  * nothing to carry.
@@ -30,12 +38,9 @@ export function renderPrevious(
 	return [
 		`An earlier automated review of this pull request, at ${where}, reported these findings. They can be wrong:`,
 		...kept.map((r, i) => {
-			const at = [r.path, r.line].filter((v) => v !== undefined).join(":");
-			// A newline in model text would otherwise look like another finding.
-			const text = r.text
-				.replace(/\s+/g, " ")
-				.trim()
-				.slice(0, PREVIOUS_ITEM_CAP);
+			const path = r.path === undefined ? undefined : oneField(r.path);
+			const at = [path, r.line].filter((v) => v !== undefined).join(":");
+			const text = oneField(r.text);
 			return `${i + 1}. [${r.severity}]${at ? ` ${at}` : ""} ${text}`;
 		}),
 	].join("\n");
