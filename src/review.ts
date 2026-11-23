@@ -166,6 +166,8 @@ export async function submitReview(
 /**
  * GitHub keeps one state per reviewer, so a head that already carries a
  * `REQUEST_CHANGES` from castellan needs no second review: the state stands.
+ * The latest decision-bearing review is the state, so a later `APPROVE` at the
+ * same head means the block is gone, and a `COMMENT` changes nothing.
  */
 export async function hasLiveBlocker(
 	transport: GithubTransport,
@@ -177,12 +179,13 @@ export async function hasLiveBlocker(
 		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{ owner, repo, pull_number: pullNumber, per_page: 100 },
 	);
-	return reviews.some(
+	const latest = reviews.findLast(
 		(r) =>
 			r.user?.login === login &&
-			r.state === "CHANGES_REQUESTED" &&
-			r.commit_id === headSha,
+			r.commit_id === headSha &&
+			(r.state === "APPROVED" || r.state === "CHANGES_REQUESTED"),
 	);
+	return latest?.state === "CHANGES_REQUESTED";
 }
 
 /**
