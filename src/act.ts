@@ -4,13 +4,19 @@ import { rightLines } from "./diff.js";
 import type { GithubTransport, Repo } from "./github.js";
 import {
 	dismissStaleBlocker,
+	hasLiveBlocker,
 	inlineComments,
 	postedAnchors,
 	type ReviewEvent,
 	type ReviewOutcome,
 	submitReview,
 } from "./review.js";
-import { escalationReviewers, requestReviewers } from "./reviewers.js";
+import {
+	escalationReviewers,
+	type RequestPart,
+	requestReviewers,
+	teamPart,
+} from "./reviewers.js";
 import {
 	type Context,
 	castellanWrote,
@@ -90,8 +96,10 @@ export async function act(
 		return { approved: false, queued: false, skipped: "pushed_fixes" };
 	}
 
-	const escalate = (rule: string, text: string): Brief => ({
+	/** `keepInline` only when the findings it names are posted on this run. */
+	const escalate = (rule: string, text: string, keepInline = false): Brief => ({
 		...brief,
+		inline: keepInline ? brief.inline : undefined,
 		outcome: { verdict: "escalate", reasons: [{ rule, text }] },
 	});
 	const publish = async (b: Brief) => {
@@ -119,6 +127,7 @@ export async function act(
 			return escalate(
 				"protected_guard",
 				"touches a protected path, protected team or governance file",
+				true,
 			);
 		// The writer is not the judge: a head castellan committed needs a human
 		// approval on that head, not another automated one.
@@ -129,6 +138,7 @@ export async function act(
 			return escalate(
 				"castellan_written",
 				"castellan wrote a commit on this head and no human approved it",
+				true,
 			);
 		return brief;
 	};
@@ -155,7 +165,9 @@ export async function act(
 		: new Set<string>();
 	const comments = planned.filter((c) => !already.has(`${c.path}:${c.line}`));
 	const reasons = final.review?.verdict.reasons ?? [];
-	const blocking = comments.some(
+	// The dedup key is the anchor, so a reported blocker can already be posted: the
+	// block follows what this head reports, not what still needs posting.
+	const blocking = planned.some(
 		(c) => reasons[c.index]?.severity === "blocker",
 	);
 	const event: ReviewEvent =
@@ -168,8 +180,21 @@ export async function act(
 		comments.some((c) => c.index === i.index),
 	);
 	const post = async (): Promise<ReviewOutcome | null> => {
-		if (!comments.length && event !== "APPROVE") return null;
 		try {
+			if (!comments.length && event !== "APPROVE") {
+				// Dedup left nothing to post, but the head still reports a blocker: a
+				// body-only review carries it, unless this head already carries one.
+				// The lookup is inside the try, so a failed read leaves the findings in
+				// the brief instead of ending the run.
+				const carried =
+					event !== "REQUEST_CHANGES" ||
+					(await hasLiveBlocker(transport, repoRef, {
+						pullNumber,
+						headSha,
+						login: author.login,
+					}));
+				if (carried) return null;
+			}
 			return await submitReview(transport, repoRef, {
 				pullNumber,
 				headSha,
@@ -184,19 +209,62 @@ export async function act(
 		}
 	};
 
+	// The author can push while the model runs: a run for an earlier head must not
+	// post or dismiss against this one.
+	const liveHead = async () => {
+		const { data } = await transport.request(
+			"GET /repos/{owner}/{repo}/pulls/{pull_number}",
+			{ owner, repo, pull_number: pullNumber },
+		);
+		return data;
+	};
+	const stopFor = (pr: {
+		state: string;
+		merged?: boolean | null;
+		head: { sha: string };
+	}): ActResult | null =>
+		pr.state !== "open" || pr.merged
+			? { approved: false, queued: false, skipped: "not_open" }
+			: pr.head.sha !== headSha
+				? { approved: false, queued: false, skipped: "stale_head" }
+				: null;
+	const moved = stopFor(await liveHead());
+	if (moved) return moved;
+
 	// An escalation has nobody watching it until a reviewer is asked, and shadow
 	// must not write, so enforce is the only place this sends. The head is recorded
 	// in the state block so a sweep or a later event does not ask again, including
 	// after a human removed the request.
 	const askReviewers = async (b: Brief) => {
 		if (config.mode !== "enforce" || b.outcome.verdict !== "escalate") return;
-		if (b.key.requested === headSha) return;
-		const asked = await requestReviewers(transport, repoRef, pullNumber, {
-			...escalationReviewers(b, config),
+		const already =
+			b.key.requested === headSha ? (b.key.requestedParts ?? []) : [];
+		const target = escalationReviewers(b, config);
+		const teamKey = target.team ? teamPart(target.team) : undefined;
+		const wanted: RequestPart[] = [
+			...(teamKey ? [teamKey] : []),
+			...(target.users.length ? (["users"] as const) : []),
+		];
+		if (wanted.every((part) => already.includes(part))) return;
+		const landed = await requestReviewers(transport, repoRef, pullNumber, {
+			...target,
 			author: snapshot.author,
+			already,
 		});
-		// A failed request is retried on the next event for this head.
-		if (asked) b.key.requested = headSha;
+		// Each half is recorded on its own, so a rejected half is retried on the
+		// next event for this head without asking the other one again.
+		if (landed.length) {
+			b.key.requested = headSha;
+			b.key.requestedParts = [...new Set([...already, ...landed])];
+		}
+		// A half that was already asked on this head still stands, so the brief keeps
+		// naming the team unless nobody has the request.
+		if (
+			target.team &&
+			!already.includes(teamPart(target.team)) &&
+			!landed.includes(teamPart(target.team))
+		)
+			b.ownerTeam = undefined;
 	};
 	await askReviewers(final);
 
@@ -213,6 +281,10 @@ export async function act(
 	// No anchored blocker at this head, so an earlier one must not keep the PR
 	// blocked: GitHub would hold the old `REQUEST_CHANGES` until a later review.
 	if (event !== "REQUEST_CHANGES") {
+		// Posting the review and the brief takes time, and a blocker posted for a
+		// newer head in that window is not this run's to lift: read again right here.
+		const beforeDismissal = stopFor(await liveHead());
+		if (beforeDismissal) return beforeDismissal;
 		await dismissStaleBlocker(transport, repoRef, {
 			pullNumber,
 			headSha,
@@ -223,16 +295,10 @@ export async function act(
 	if (config.mode === "shadow") return { approved: false, queued: false };
 	if (!isMerge) return { approved: false, queued: false, skipped: "not_merge" };
 
-	const { data: pr } = await transport.request(
-		"GET /repos/{owner}/{repo}/pulls/{pull_number}",
-		{ owner, repo, pull_number: pullNumber },
-	);
-	if (pr.state !== "open" || pr.merged) {
-		return { approved: false, queued: false, skipped: "not_open" };
-	}
-	if (pr.head.sha !== headSha) {
-		return { approved: false, queued: false, skipped: "stale_head" };
-	}
+	// The approval is the last write, so it gets its own read of the head.
+	const pr = await liveHead();
+	const stoppedAfterDismissal = stopFor(pr);
+	if (stoppedAfterDismissal) return stoppedAfterDismissal;
 
 	review = await post();
 	const approved = review?.approved ?? false;

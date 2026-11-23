@@ -101,7 +101,7 @@ describe("renderComment", () => {
 		expect(renderComment(brief)).toMatchInlineSnapshot(`
 			"## Castellan brief
 
-			**Verdict: merge** | Owner team: maintainers
+			**Verdict: merge**
 
 			### Model review
 			- Matches the linked issue and description: yes
@@ -224,10 +224,23 @@ describe("renderComment", () => {
 		]);
 	});
 
-	it("marks shadow on the verdict line", () => {
-		expect(renderComment({ ...brief, shadow: true })).toContain(
-			"**Verdict: merge** (shadow) | Owner team: maintainers",
-		);
+	it("marks shadow on the verdict line, without naming a team it does not ask", () => {
+		const out = renderComment({
+			...brief,
+			shadow: true,
+			outcome: { verdict: "escalate", reasons: [] },
+		});
+		expect(out).toContain("**Verdict: escalate** (shadow)");
+		expect(out).not.toContain("Owner team");
+	});
+
+	it("names the team an escalation asks for a review", () => {
+		expect(
+			renderComment({
+				...brief,
+				outcome: { verdict: "escalate", reasons: [] },
+			}),
+		).toContain("**Verdict: escalate** | Owner team: maintainers");
 	});
 
 	it("says the model did not run in one line, with no empty sections", () => {
@@ -344,14 +357,12 @@ describe("renderComment", () => {
 		const body = renderComment({
 			...brief,
 			related: [
-				{ number: 90, title: "tunnel rework", overlap: ["src/a.ts"] },
-				{ number: 91, title: "second @bob fix", overlap: ["src/a.ts"] },
+				{ number: 90, overlap: ["src/a.ts"] },
+				{ number: 91, overlap: ["src/a.ts"] },
 			],
 		});
+		// Only the number: the list is rendered from the PR numbers alone.
 		expect(body).toContain("Open PRs that share files with this PR: #90, #91");
-		// Only the number: another author's title is not rendered into the brief.
-		expect(body).not.toContain("tunnel rework");
-		expect(body).not.toContain("second @bob fix");
 	});
 
 	it("says nothing about open PRs when there are none", () => {

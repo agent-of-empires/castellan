@@ -7,7 +7,6 @@ export const SCAN_LIMIT = 20;
 
 export interface RelatedPr {
 	number: number;
-	title: string;
 	/** The paths this PR and the reviewed one both change. */
 	overlap: string[];
 }
@@ -17,7 +16,6 @@ const QUERY = `query($owner: String!, $repo: String!, $first: Int!) {
     pullRequests(states: OPEN, first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) {
       nodes {
         number
-        title
         baseRefName
         files(first: 100) { nodes { path } }
       }
@@ -47,7 +45,6 @@ export async function relatedOpenPrs(
 				pullRequests?: {
 					nodes?: {
 						number: number;
-						title: string;
 						baseRefName?: string;
 						files?: { nodes?: { path: string }[] };
 					}[];
@@ -61,7 +58,6 @@ export async function relatedOpenPrs(
 				.filter((n) => n.baseRefName === baseRef)
 				.map((n) => ({
 					number: n.number,
-					title: n.title,
 					overlap: (n.files?.nodes ?? [])
 						.map((f) => f.path)
 						.filter((p) => mine.has(p)),
