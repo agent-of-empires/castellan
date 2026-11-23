@@ -10,7 +10,12 @@ import {
 	type ReviewOutcome,
 	submitReview,
 } from "./review.js";
-import { escalationReviewers, requestReviewers } from "./reviewers.js";
+import {
+	escalationReviewers,
+	type RequestPart,
+	requestReviewers,
+	teamPart,
+} from "./reviewers.js";
 import { type Context, touchesProtected } from "./rules.js";
 import type { Snapshot } from "./snapshot.js";
 import { type Author, setStatus, upsertComment } from "./status.js";
@@ -189,8 +194,9 @@ export async function act(
 		const already =
 			b.key.requested === headSha ? (b.key.requestedParts ?? []) : [];
 		const target = escalationReviewers(b, config);
-		const wanted = [
-			...(target.team ? (["team"] as const) : []),
+		const teamKey = target.team ? teamPart(target.team) : undefined;
+		const wanted: RequestPart[] = [
+			...(teamKey ? [teamKey] : []),
 			...(target.users.length ? (["users"] as const) : []),
 		];
 		if (wanted.every((part) => already.includes(part))) return;
@@ -204,10 +210,15 @@ export async function act(
 		if (landed.length) {
 			b.key.requested = headSha;
 			b.key.requestedParts = [...new Set([...already, ...landed])];
-		} else {
-			// Nobody was asked, so the brief must not claim a team was.
-			b.ownerTeam = undefined;
 		}
+		// A half that was already asked on this head still stands, so the brief keeps
+		// naming the team unless nobody has the request.
+		if (
+			target.team &&
+			!already.includes(teamPart(target.team)) &&
+			!landed.includes(teamPart(target.team))
+		)
+			b.ownerTeam = undefined;
 	};
 	await askReviewers(final);
 

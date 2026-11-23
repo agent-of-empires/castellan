@@ -28,8 +28,14 @@ export function ownedTeam(
 	return undefined;
 }
 
-/** One half of the review request, remembered on its own. */
-export type RequestPart = "team" | "users";
+/**
+ * One half of the review request, remembered on its own. The team half carries
+ * the slug it asked, so a config change within one head still reaches the new
+ * team instead of being skipped as already asked.
+ */
+export type RequestPart = `team:${string}` | "users";
+
+export const teamPart = (team: string): RequestPart => `team:${slug(team)}`;
 
 /**
  * Asks the configured reviewers for a review. Best effort: a PR that cannot be
@@ -76,12 +82,13 @@ export async function requestReviewers(
 		}
 	};
 	const landed: RequestPart[] = [];
+	const asked = team ? teamPart(team) : undefined;
 	if (
-		team &&
-		!already.includes("team") &&
-		(await ask({ team_reviewers: [slug(team)] }))
+		asked &&
+		!already.includes(asked) &&
+		(await ask({ team_reviewers: [slug(team ?? "")] }))
 	) {
-		landed.push("team");
+		landed.push(asked);
 	}
 	if (
 		reviewers.length &&

@@ -159,20 +159,36 @@ describe("requestReviewers", () => {
 				users: ["bob"],
 				author: "alice",
 			}),
-		).resolves.toEqual(["team"]);
+		).resolves.toEqual(["team:platform"]);
 		// The retry asks only the half that did not land.
 		request.mockClear();
 		await requestReviewers(t, { owner: "o", repo: "r" }, 3, {
 			team: "platform",
 			users: ["bob"],
 			author: "alice",
-			already: ["team"],
+			already: ["team:platform"],
 		});
 		const asked = request.mock.calls.map(
 			(c) => (c as unknown[])[1] as Record<string, unknown>,
 		);
 		expect(asked).toHaveLength(1);
 		expect(asked[0]).toMatchObject({ reviewers: ["bob"] });
+	});
+
+	it("asks a team the head has not asked yet", async () => {
+		// The recorded half names the slug it asked, so a config change within one
+		// head still reaches the new team.
+		const { request, transport: t } = transport();
+		await requestReviewers(t, { owner: "o", repo: "r" }, 3, {
+			team: "maintainers",
+			users: [],
+			author: "alice",
+			already: ["team:platform"],
+		});
+		expect(request).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ team_reviewers: ["maintainers"] }),
+		);
 	});
 
 	it("drops the org from a team that already carries it", async () => {

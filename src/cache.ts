@@ -4,6 +4,7 @@ import {
 	type ReviewResult,
 	verdictSchema,
 } from "./llm.js";
+import type { RequestPart } from "./reviewers.js";
 
 const blockSchema = z.strictObject({
 	v: z.literal(1),
@@ -18,7 +19,14 @@ const blockSchema = z.strictObject({
 	/** Head SHA whose escalation already asked for reviewers, so a sweep does not ask again. */
 	requested: z.string().optional(),
 	/** Which halves of that request landed, so a rejected half is not retried for the other. */
-	requestedParts: z.array(z.enum(["team", "users"])).optional(),
+	requestedParts: z
+		.array(
+			z.custom<RequestPart>(
+				(v) =>
+					typeof v === "string" && (v === "users" || v.startsWith("team:")),
+			),
+		)
+		.optional(),
 	llm: z
 		.strictObject({
 			ok: z.literal(true),
@@ -47,8 +55,8 @@ export interface CacheKey {
 	threadReruns?: number;
 	/** Head SHA whose escalation already asked for reviewers. */
 	requested?: string;
-	/** The halves of that request that landed. */
-	requestedParts?: ("team" | "users")[];
+	/** The halves of that request that landed; the team half names its slug. */
+	requestedParts?: RequestPart[];
 }
 
 export const MARKER = "<!-- castellan";

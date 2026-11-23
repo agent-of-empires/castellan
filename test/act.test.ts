@@ -791,6 +791,32 @@ describe("escalation reviewers", () => {
 		expect(routes()).not.toContain(REVIEWERS);
 	});
 
+	it("keeps naming the team when only the users half is retried", async () => {
+		const f = fake({ reviewersError: new Error("422") });
+		const config = await load("mode: enforce\nreviewers:\n  users: [bob]");
+		const b = { ...brief("escalate"), ownerTeam: "platform" };
+		// The team half landed on an earlier event for this head, so this run only
+		// retries the login that was refused.
+		b.key.requested = "head1";
+		b.key.requestedParts = ["team:platform"];
+		await act(f.transport, repo, {
+			pullNumber: 3,
+			snapshot: snapshot(),
+			config,
+			ctx,
+			brief: b,
+			author,
+		});
+		const calls = f.routes().filter((r) => r === REVIEWERS);
+		expect(calls).toHaveLength(1);
+		expect(f.request).toHaveBeenCalledWith(
+			REVIEWERS,
+			expect.objectContaining({ reviewers: ["bob"] }),
+		);
+		const body = (f.sent(COMMENT).at(-1)?.body ?? "") as string;
+		expect(body).toContain("Owner team: platform");
+	});
+
 	it("still escalates when the request fails", async () => {
 		const { result } = await run(
 			"mode: enforce\nreviewers:\n  team: maintainers",

@@ -186,10 +186,18 @@ export async function evaluatePull(
 		);
 		const read = githubReader(transport, repoRef);
 		// Read even without teams.protected: the owning team is what an escalation
-		// asks for a review, and what the brief names.
+		// asks for a review, and what the brief names. Without the setting nothing
+		// depends on it but a best effort request, so a read error means no team
+		// rather than a failed run.
 		let codeowners: CodeownersRule[] = [];
 		for (const path of CODEOWNERS_PATHS) {
-			const text = await read(pr.base.ref, path);
+			let text: string | null;
+			try {
+				text = await read(pr.base.ref, path);
+			} catch (err) {
+				if (config.teams.protected) throw err;
+				text = null;
+			}
 			if (text !== null) {
 				codeowners = parseCodeowners(text);
 				break;
