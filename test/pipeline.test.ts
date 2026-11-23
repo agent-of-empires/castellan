@@ -774,6 +774,7 @@ describe("evaluatePull", () => {
 					text: JSON.stringify({
 						intent_match: true,
 						new_behavior: false,
+						escalate: false,
 						reasons: [
 							{
 								severity: "blocker",
