@@ -79,6 +79,9 @@ const modelBrief = (verdict: "merge" | "escalate" = "merge"): Brief => ({
 
 interface World {
 	head?: string;
+	/** The head moves to `movedTo` after this many reads of the pull request. */
+	reads?: number;
+	movedTo?: string;
 	state?: string;
 	autoMerge?: object | null;
 	reviews?: unknown[];
@@ -89,6 +92,8 @@ interface World {
 
 function fake({
 	head = "head1",
+	reads,
+	movedTo,
 	state = "open",
 	autoMerge = null,
 	reviews = [],
@@ -98,16 +103,19 @@ function fake({
 }: World = {}) {
 	// Reviews this run posts, so a later read sees them as GitHub would.
 	const posted: unknown[] = [];
+	let pullReads = 0;
 	const request = vi.fn(
 		async (route: string, p: { event?: string; commit_id?: string } = {}) => {
-			if (route.startsWith("GET /repos/{owner}/{repo}/pulls/")) {
+			if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") {
+				pullReads += 1;
+				const sha = reads !== undefined && pullReads > reads ? movedTo : head;
 				return {
 					data: {
 						state,
 						merged: false,
 						node_id: "PR_1",
 						auto_merge: autoMerge,
-						head: { sha: head },
+						head: { sha },
 					},
 				};
 			}
@@ -346,6 +354,30 @@ describe("inline findings", () => {
 });
 
 describe("a head that moved while the model ran", () => {
+	it("does not lift a blocker posted for a newer head after the brief", async () => {
+		const { request, routes, result } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reads: 1,
+				movedTo: "head2",
+				reviews: [
+					{
+						id: 5,
+						user: { login: author.login },
+						commit_id: "head0",
+						state: "CHANGES_REQUESTED",
+					},
+				],
+			},
+			{ brief: modelBrief("escalate") },
+		);
+		// The findings review is posted before the head moves, the dismissal is not.
+		expect(routes()).toContain(APPROVE);
+		expect(routes()).toContain(COMMENT);
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
+		expect(result.skipped).toBe("stale_head");
+	});
+
 	it("posts and dismisses nothing in enforce", async () => {
 		const { request, routes, result } = await run(
 			"mode: enforce\nreview: { inline: true }",

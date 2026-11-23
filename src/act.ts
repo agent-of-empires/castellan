@@ -180,6 +180,10 @@ export async function act(
 	// No anchored blocker at this head, so an earlier one must not keep the PR
 	// blocked: GitHub would hold the old `REQUEST_CHANGES` until a later review.
 	if (event !== "REQUEST_CHANGES") {
+		// Posting the review and the brief takes time, and a blocker posted for a
+		// newer head in that window is not this run's to lift: read again right here.
+		const beforeDismissal = stopFor(await liveHead());
+		if (beforeDismissal) return beforeDismissal;
 		await dismissStaleBlocker(transport, repoRef, {
 			pullNumber,
 			headSha,
