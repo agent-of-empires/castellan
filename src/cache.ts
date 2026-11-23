@@ -6,6 +6,7 @@ import {
 	type Verdict,
 	verdictSchema,
 } from "./llm.js";
+import type { RequestPart } from "./reviewers.js";
 
 const blockSchema = z.strictObject({
 	v: z.literal(1),
@@ -22,6 +23,15 @@ const blockSchema = z.strictObject({
 	/** Findings carried to the next head, kept even when a head's model run failed. */
 	carry: z
 		.strictObject({ sha: z.string(), reasons: z.array(reasonSchema) })
+		.optional(),
+	/** Which halves of that request landed, so a rejected half is not retried for the other. */
+	requestedParts: z
+		.array(
+			z.custom<RequestPart>(
+				(v) =>
+					typeof v === "string" && (v === "users" || v.startsWith("team:")),
+			),
+		)
 		.optional(),
 	llm: z
 		.strictObject({
@@ -53,6 +63,8 @@ export interface CacheKey {
 	requested?: string;
 	/** Findings carried forward from an earlier head. */
 	carry?: { sha: string; reasons: Verdict["reasons"] };
+	/** The halves of that request that landed; the team half names its slug. */
+	requestedParts?: RequestPart[];
 }
 
 export const MARKER = "<!-- castellan";
