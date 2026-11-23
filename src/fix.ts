@@ -24,9 +24,10 @@ const HEADLINE = "fix: apply castellan review suggestions";
  * runs whatever CI executes before a human reads it, which is a denylist no one
  * can keep complete (`src/`, `test/`, `scripts/` and every config they read). So
  * only files no build reads are writable, and a code suggestion stays a comment
- * the author can apply themselves.
+ * the author can apply themselves. `.mdx` is excluded for the same reason as
+ * `.ts`: it compiles to JavaScript in Astro, Docusaurus and Next.js builds.
  */
-const NON_EXECUTED = /\.(md|mdx)$/i;
+const NON_EXECUTED = /\.md$/i;
 
 export interface Fix {
 	path: string;

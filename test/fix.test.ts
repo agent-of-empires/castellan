@@ -199,7 +199,13 @@ describe("planFixes", () => {
 	it("keeps a code suggestion a comment, whatever CI runs", () => {
 		// The allowlist is prose, so nothing a build or CI executes is writable: a
 		// denylist cannot name every file `pnpm test`, `build` or `eval` reads.
-		for (const path of ["src/a.ts", "test/a.test.ts", "scripts/x.mjs"]) {
+		for (const path of [
+			"src/a.ts",
+			"test/a.test.ts",
+			"scripts/x.mjs",
+			// Compiled to JavaScript by Astro, Docusaurus and Next.js builds.
+			"docs/page.mdx",
+		]) {
 			const text = [
 				`diff --git a/${path} b/${path}`,
 				`--- a/${path}`,
