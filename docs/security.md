@@ -78,7 +78,7 @@ The injectable text is the PR title, body, diff, linked issue body, the unresolv
 - **Inert output.** Model and PR text rendered into comments is stripped of `@` mentions, links, raw URLs, HTML and dashes (`escapeText`), and the state block escapes `<`, `>` and dashes so model text cannot close the comment or forge a marker. Inline review comments go through the same `escapeText`, and a finding is only placed on a `path` and `line` the diff itself shows, so the model cannot aim a comment at an arbitrary line of a file it never saw.
 - **Fail closed.** Raw provider errors are kept out of comments.
 
-What remains: a small, in scope PR from an eligible author whose text persuades the model that it matches its issue. The size gate (default `size: fixed`, which escalates over 100 lines, 5 files or 2 top-level dirs; `size: model` replaces those counts with the model's own judgement, and `size: off` removes both), protected paths, the external author rule (a `fix:` linked to a bug labeled issue) and CI limit how much that can be.
+What remains: an in scope PR from an eligible author whose text persuades the model that it matches its issue. The default size gate (`size: fixed`, which escalates over 100 lines, 5 files or 2 top-level dirs) bounds how much such a PR can touch, while `size: model` leaves that bound to the model's own judgement and `size: off` removes it; protected paths, the external author rule (a `fix:` linked to a bug labeled issue) and CI limit the rest.
 
 ## What the budget cap does
 
