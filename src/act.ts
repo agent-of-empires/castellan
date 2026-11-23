@@ -68,8 +68,10 @@ export async function act(
 		return { approved: false, queued: false, skipped: "stale_head" };
 	}
 
-	const escalate = (rule: string, text: string): Brief => ({
+	/** `keepInline` only when the findings it names are posted on this run. */
+	const escalate = (rule: string, text: string, keepInline = false): Brief => ({
 		...brief,
+		inline: keepInline ? brief.inline : undefined,
 		outcome: { verdict: "escalate", reasons: [{ rule, text }] },
 	});
 	const publish = async (b: Brief) => {
@@ -96,6 +98,7 @@ export async function act(
 			? escalate(
 					"protected_guard",
 					"touches a protected path, protected team or governance file",
+					true,
 				)
 			: brief;
 	const isMerge = final.outcome.verdict === "merge";
@@ -111,7 +114,9 @@ export async function act(
 		: new Set<string>();
 	const comments = planned.filter((c) => !already.has(`${c.path}:${c.line}`));
 	const reasons = final.review?.verdict.reasons ?? [];
-	const blocking = comments.some(
+	// The dedup key is the anchor, so a reported blocker can already be posted: the
+	// block follows what this head reports, not what still needs posting.
+	const blocking = planned.some(
 		(c) => reasons[c.index]?.severity === "blocker",
 	);
 	const event: ReviewEvent =
@@ -140,6 +145,28 @@ export async function act(
 		}
 	};
 
+	// The author can push while the model runs: a run for an earlier head must not
+	// post or dismiss against this one.
+	const liveHead = async () => {
+		const { data } = await transport.request(
+			"GET /repos/{owner}/{repo}/pulls/{pull_number}",
+			{ owner, repo, pull_number: pullNumber },
+		);
+		return data;
+	};
+	const stopFor = (pr: {
+		state: string;
+		merged?: boolean | null;
+		head: { sha: string };
+	}): ActResult | null =>
+		pr.state !== "open" || pr.merged
+			? { approved: false, queued: false, skipped: "not_open" }
+			: pr.head.sha !== headSha
+				? { approved: false, queued: false, skipped: "stale_head" }
+				: null;
+	const moved = stopFor(await liveHead());
+	if (moved) return moved;
+
 	// An approving review waits for the guards below; a findings review cannot approve anything.
 	const drafted = event === "APPROVE" ? null : await post();
 	// The brief is the record that must not be lost, so a review that did not post
@@ -165,16 +192,10 @@ export async function act(
 		return { approved: false, queued: false, skipped: "not_merge" };
 	}
 
-	const { data: pr } = await transport.request(
-		"GET /repos/{owner}/{repo}/pulls/{pull_number}",
-		{ owner, repo, pull_number: pullNumber },
-	);
-	if (pr.state !== "open" || pr.merged) {
-		return { approved: false, queued: false, skipped: "not_open" };
-	}
-	if (pr.head.sha !== headSha) {
-		return { approved: false, queued: false, skipped: "stale_head" };
-	}
+	// The approval is the last write, so it gets its own read of the head.
+	const pr = await liveHead();
+	const stoppedAfterDismissal = stopFor(pr);
+	if (stoppedAfterDismissal) return stoppedAfterDismissal;
 
 	review = await post();
 	const approved = review?.approved ?? false;
