@@ -145,8 +145,9 @@ export async function submitReview(
 		return { approved: true, url: data.html_url };
 	}
 
-	// The caller only posts a `COMMENT` or `REQUEST_CHANGES` review when it has
-	// comments, and `index` is castellan's own bookkeeping, not a review field.
+	// The caller posts a `COMMENT` review only when it has comments; a
+	// `REQUEST_CHANGES` may carry none, since the block itself is the message, and
+	// `index` is castellan's own bookkeeping, not a review field.
 	const { data } = await transport.request(
 		"POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
 		{
@@ -160,6 +161,28 @@ export async function submitReview(
 		},
 	);
 	return { approved: false, url: data.html_url };
+}
+
+/**
+ * GitHub keeps one state per reviewer, so a head that already carries a
+ * `REQUEST_CHANGES` from castellan needs no second review: the state stands.
+ */
+export async function hasLiveBlocker(
+	transport: GithubTransport,
+	{ owner, repo }: Repo,
+	opts: { pullNumber: number; headSha: string; login: string },
+): Promise<boolean> {
+	const { pullNumber, headSha, login } = opts;
+	const reviews = await transport.paginate(
+		"GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+		{ owner, repo, pull_number: pullNumber, per_page: 100 },
+	);
+	return reviews.some(
+		(r) =>
+			r.user?.login === login &&
+			r.state === "CHANGES_REQUESTED" &&
+			r.commit_id === headSha,
+	);
 }
 
 /**

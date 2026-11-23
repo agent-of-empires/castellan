@@ -222,7 +222,7 @@ describe("an earlier blocker", () => {
 		const b = modelBrief("escalate");
 		if (b.review?.verdict.reasons[0])
 			b.review.verdict.reasons[0].severity = "blocker";
-		const { request, routes, sent } = await run(
+		const { request, sent } = await run(
 			"mode: enforce\nreview: { inline: true }",
 			{
 				reviews: [blocker()],
@@ -232,11 +232,54 @@ describe("an earlier blocker", () => {
 			},
 			{ brief: b },
 		);
-		// The dedup is per anchor, so nothing is posted again; the block must hold.
-		expect(routes()).not.toContain(APPROVE);
+		// The dedup is per anchor, so no comment is posted again; the block moves to
+		// this head as a body-only review rather than leaning on the earlier one.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
 		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
 		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
 		expect(body).toContain("the port is not recorded");
+	});
+
+	it("blocks when the anchor has a comment but no earlier block", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviews: [{ id: 6, user: { login: author.login }, state: "COMMENTED" }],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		// The anchor is taken, so nothing can be attached; the head still blocks.
+		expect(request).toHaveBeenCalledWith(
+			APPROVE,
+			expect.objectContaining({ event: "REQUEST_CHANGES", comments: [] }),
+		);
+	});
+
+	it("does not post a second block at a head that already carries one", async () => {
+		const b = modelBrief("escalate");
+		if (b.review?.verdict.reasons[0])
+			b.review.verdict.reasons[0].severity = "blocker";
+		const { request } = await run(
+			"mode: enforce\nreview: { inline: true }",
+			{
+				reviews: [blocker({ commit_id: "head1" })],
+				comments: [
+					{ user: { login: author.login }, path: "src/a.ts", line: 2 },
+				],
+			},
+			{ brief: b },
+		);
+		expect(request).not.toHaveBeenCalledWith(APPROVE, expect.anything());
+		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
 	});
 
 	it("is dismissed when this head also posts a findings review", async () => {

@@ -3,6 +3,7 @@ import type { Config } from "./config.js";
 import type { GithubTransport, Repo } from "./github.js";
 import {
 	dismissStaleBlocker,
+	hasLiveBlocker,
 	inlineComments,
 	postedAnchors,
 	type ReviewEvent,
@@ -129,7 +130,18 @@ export async function act(
 		comments.some((c) => c.index === i.index),
 	);
 	const post = async (): Promise<ReviewOutcome | null> => {
-		if (!comments.length && event !== "APPROVE") return null;
+		if (!comments.length && event !== "APPROVE") {
+			// Dedup left nothing to post, but the head still reports a blocker: a
+			// body-only review carries it, unless this head already carries one.
+			const carried =
+				event !== "REQUEST_CHANGES" ||
+				(await hasLiveBlocker(transport, repoRef, {
+					pullNumber,
+					headSha,
+					login: author.login,
+				}));
+			if (carried) return null;
+		}
 		try {
 			return await submitReview(transport, repoRef, {
 				pullNumber,
