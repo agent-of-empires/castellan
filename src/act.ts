@@ -129,6 +129,10 @@ export async function act(
 	const postedInline = final.inline?.filter((i) =>
 		comments.some((c) => c.index === i.index),
 	);
+	// The review body describes what this run posts. A deduped finding is not on
+	// the diff, so it has to be a reason: otherwise a body-only block names no
+	// blocker and points at a comment that is not there.
+	const bodyBrief: Brief = { ...final, inline: postedInline };
 	const post = async (): Promise<ReviewOutcome | null> => {
 		try {
 			if (!comments.length && event !== "APPROVE") {
@@ -149,7 +153,7 @@ export async function act(
 				pullNumber,
 				headSha,
 				event,
-				body: renderReviewBody(final),
+				body: renderReviewBody(bodyBrief),
 				comments,
 				login: author.login,
 			});

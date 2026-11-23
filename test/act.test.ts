@@ -226,8 +226,17 @@ describe("an earlier blocker", () => {
 
 	it("stands when its anchor was already posted at an earlier head", async () => {
 		const b = modelBrief("escalate");
-		if (b.review?.verdict.reasons[0])
+		if (b.review?.verdict.reasons[0]) {
 			b.review.verdict.reasons[0].severity = "blocker";
+			// As `verdict.ts` files it, so the reason is on the brief the body renders.
+			b.outcome.reasons = [
+				{
+					rule: "llm_blocker",
+					text: b.review.verdict.reasons[0].text,
+					path: "src/a.ts",
+				},
+			];
+		}
 		const { request, sent } = await run(
 			"mode: enforce\nreview: { inline: true }",
 			{
@@ -247,6 +256,13 @@ describe("an earlier blocker", () => {
 		expect(request).not.toHaveBeenCalledWith(DISMISS, expect.anything());
 		const body = (sent(COMMENT)[0]?.body ?? "").split("<!-- castellan")[0];
 		expect(body).toContain("the port is not recorded");
+		// Nothing is attached to the diff at this head, so the block has to name
+		// the blocker itself instead of counting a finding that is not there.
+		const review = request.mock.calls.find(
+			([route]) => route === APPROVE,
+		)?.[1] as { body?: string } | undefined;
+		expect(review?.body).toContain("the port is not recorded");
+		expect(review?.body).not.toContain("inline on the diff");
 	});
 
 	it("blocks when the anchor has a comment but no earlier block", async () => {
